@@ -383,7 +383,7 @@ def phase_portrait(x_interval, y_interval, x_nump, y_nump, num_cells, list_cops,
     :param num_cells: (float, positive) M the number of land cells in protected area
     :param list_cops: (list of floats, non-negative) list of total ranger values, plot portrait for each
     :param nondim_list: (list) parameters for nondimensionalised model, [psi, delta, nu, sigma]
-    :param lspec: (list) [line width, marker size] both should be positive floats
+    :param lspec: (list) [line width, marker size, density of lines, arrow size] all should be positive floats
     :param colour_list (list) 3 string, hex codes for plot colours [trajectories, nullclines, crit. points]
     :param save: (True/False) True if you want to save the plot, False otherwise
     :param fname: (str) Folder location to save figure
@@ -425,11 +425,12 @@ def phase_portrait(x_interval, y_interval, x_nump, y_nump, num_cells, list_cops,
         X_dash, Y_dash = odefun((X, Y), 0, num_cells, list_cops[ii], nondim_list)
 
         # Create streamplot of the ODE system and add to current subplot
-        axis.streamplot(X, Y, X_dash, Y_dash, linewidth=lspec[0], color=colour_list[0])
+        axis.streamplot(X, Y, X_dash, Y_dash, linewidth=lspec[0], color=colour_list[0],
+                        density=lspec[2], arrowsize=lspec[3])
 
         # Add the nullclines to the current subplot
-        nullclines([x_interval[0], 1], y_interval, num_cells, list_cops[ii],
-                   nondim_list, lspec[0], colour_list[1], axis)
+        # nullclines([x_interval[0], 1], y_interval, num_cells, list_cops[ii],
+        #            nondim_list, lspec[0], colour_list[1], axis)
 
         # Add markers at extinction and  carrying capacity critical points
         axis.plot(0, 0, '*', markersize=lspec[1], color=colour_list[2])
@@ -482,11 +483,8 @@ font_args = {'family': 'Verdana',
 
 plt.rc('font', **font_args)
 
-# Line & marker specification
-linewid = 3  # Specify line width for nullclines
-marksize = 20  # Specify markersize for critical points
-
-linespec = [linewid, marksize]
+# Specify width/size of lines, markers, density of lines, arrows
+linespec = [3, 30, 0.4, 4]
 
 # Plot colours [trajectories, nullclines, crit. points]
 # plot_colours = ['#7570b3', 'k', '#d95f02']
@@ -501,13 +499,10 @@ while parameter_set not in ['e', 'k']:
     print('Input must be one of "e" or "k". Please try again, or type "quit" to quit')
     parameter_set = input('Choose a parameter set ("e": elephant or "k": kuempel')
 
-alpha = 1e-5 # 0.5 # 0.5 for Kuempel, 1e-5 for Zambia
-# lambda0 = [49.9, 49.97, 49.99]  # Lambda values for Kuempel et al.
-lambda0 = [park_size/300]  # number of law enforcement individuals (Source: LW, 1990 - 1ranger/300km2)
-M = park_size/cell_size  # Number of land cells (LVNP size/cell size of 706km2), or 10 for Kuempel et al.
 
 if parameter_set == 'e':
     # Model parameters - Zambia elephants
+    alpha = 1e-5
     b = 0.33  # natural per capita birth rate (Source: Lopes, 2015)
     m = 0.27  # natural per capita death rate (Source: Lopes, 2015)
     q = 2.56e-3  # catchability (Source: MG&LW, 1992)
@@ -517,9 +512,13 @@ if parameter_set == 'e':
     cF = 1037.7276  # cost of fines per poacher * prob of conviction (Source: Holden et al., 2018)
     gamma = 0.043  # arrest * conviction probability (Source: Holden et al., 2018)
 
+    lambda0 = [park_size / 300]  # number of law enforcement individuals (Source: LW, 1990 - 1ranger/300km2)
+    M = park_size / cell_size  # Number of land cells (LVNP size/cell size of 706km2), or 10 for Kuempel et al.
+
 elif parameter_set == 'k':
     # Use the Kuempel et al. 2018 parameter set and run the program
     # These parameters result in an S=0 contour
+    alpha = 0.5
     b = 1
     m = 0.1
     q = 0.7
@@ -528,6 +527,9 @@ elif parameter_set == 'k':
     c0 = 0.018
     gamma = 0.2
     cF = 0.01 / gamma  # Different from parameter value in Kuempel. /gamma so cF*gamma gives desired value
+
+    lambda0 = [49.99]#[49.9, 49.97, 49.99]  # Lambda values for Kuempel et al.
+    M = 10
 
 # Initialise plotting parameters
 # Elephant population N/(k_m*A_max) GUIDELINE: Carrying capacity is 1, so Xmax should be ~1 - 2
@@ -550,7 +552,7 @@ nondim_params = [psi, delta, nu, sigma]
 # ------ CREATE THE PHASE PORTRAIT -------
 phase = True
 if phase:
-    pname_phase = f'phase_zambia.pdf'
+    pname_phase = f'phase_kuempel_carry.pdf'
     the_plot, axes = phase_portrait(x_int, y_int, x_points, y_points, M, lambda0, nondim_params,
                                     linespec, plot_colours, save=True, fname=filename,
                                     pname=pname_phase)
