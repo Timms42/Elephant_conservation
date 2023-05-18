@@ -33,7 +33,10 @@ v10:- create function S_equals_0 to compute "bubble" condition, i.e. if implicit
 v11:- updated area-cost parameters for Zambia to reflect size of Zambia.
 v12:- added option for using straight line area-cost function when using Kuempel parameters.
 v13:- fixed the bubble contour plotting. Note: contour() and contourf() need X and Y specified as well as Z.
-v14:- created a main function
+v14.0:- created a main function
+   .1:- created function to calculate value of partial derivatives ( p_deriv() )
+   .2:- modified check_for_bubble() to optionally calculate the proliferation rate (slope of existence condition at 0)
+
 """
 
 import matplotlib.lines as mlines
@@ -41,6 +44,7 @@ import matplotlib.patches as mpatch
 import matplotlib.pyplot as plt
 import numpy as np
 import warnings as wrn
+import random as rand
 
 
 def xtot(cops_array, cells_array, nondim_list):
@@ -179,7 +183,7 @@ def implicit_curve(money_ranger, money_area, nondim_list, dataset):
         :param dataset: (str) "elephant", "kuempel", or "wildebeest". Says which area-cost model to use,
                         depending on the dataset chosen
 
-        :return (array) values of S(lambda, M)
+        :return: (array) values of S(mu_lambda, mu_area), dX/dmu_a, dX/dmu_r
    """
 
     # Unpack the nondimensional variables
@@ -204,6 +208,43 @@ def implicit_curve(money_ranger, money_area, nondim_list, dataset):
     S = dareadmu * dxdarea - par_f * dxdcops
 
     return S
+
+
+def p_deriv(money_ranger, money_area, nondim_list, dataset):
+    """
+        Compute partial derivatives
+            darea/dmu * dx/darea and f * dx/dcops
+        :param money_area: (array) array of mu_area, total money invested in area
+        :param money_ranger: (array) array of mu_rangers, total money invested in rangers
+        :param nondim_list: (dict of floats) the nondimensional parameters as in simple model
+                            f is cops conversion rate
+                           [psi, delta, nu, sigma, f, M_max, mu_0]
+        :param dataset: (str) "elephant", "kuempel", or "wildebeest". Says which area-cost model to use,
+                        depending on the dataset chosen
+
+        :return: (array, array) dX/dmu_a, dX/dmu_r
+   """
+
+    # Unpack the nondimensional variables
+    par_psi, par_delta, par_nu, par_sigma, par_f, par_Mmax, par_mu0 = nondim_list.values()
+
+    # Compute the number of rangers hired for each amount in money_array
+    num_rangers = lambda_func(par_f, money_ranger)
+
+    # Compute the number of area cells purchased for each amount in money_array
+    M = M_func(par_Mmax, par_mu0, money_area, dataset)
+
+    dareadmu = M_deriv(par_Mmax, par_mu0, money_area, dataset)
+
+    # Compute derivative of X* w.r.t. area using chain rule
+    dxdarea = (-2 * M * par_delta * num_rangers * par_nu - par_delta * num_rangers ** 2 * par_sigma +
+               M ** 2 * par_nu * par_psi) / (par_delta * num_rangers - M * par_psi) ** 2
+
+    # Compute derivative of X* w.r.t. cops
+    dxdcops = (M ** 2 * (par_delta * par_nu + par_sigma * par_psi)) / (par_delta * num_rangers - M * par_psi) ** 2
+
+    # Compute implicit function S(mu_ranger, mu_area) = dx/dmu_a - dx/dmu_r
+    return dareadmu * dxdarea, par_f * dxdcops
 
 
 def exist_cond(money_area, nondim_list, dataset):
@@ -232,6 +273,40 @@ def exist_cond(money_area, nondim_list, dataset):
     exist_contour = C / par_f * M_func(par_Mmax, par_mu0, money_area, dataset)
 
     return exist_contour
+
+
+def proliferation(dim_list, dataset):
+    """
+    Compute derivative of the function that determines if 0 < X* < 1,
+    num_cops < beta(num_cells), evaluated at num_cells = 0.
+    Define B(mu_ranger, mu_area) = beta * M(mu_area) - lambda(mu_ranger)
+    Compute slope of B = 0 contour. When  lambda(mu_ranger) > beta * M(mu_area), the stable
+    critical point is the carrying capacity, i.e. "above" the existence line
+
+    :param nondim_list: (dict of floats) the nondimensional parameters as in simple model
+                        [psi, delta, nu, sigma, f, M_max, mu_0]
+    :param dataset: (str) "elephant" or "kuempel". Says which area-cost model to use,
+                        depending on the dataset chosen
+
+    :return (float) value for derivative of mu_ranger=beta(mu_area), the existence condition, at num_cells = 0
+    """
+
+    par_b, par_m, par_k, par_q, par_alpha, par_p0, par_gamma, par_c0, par_cF, par_f, par_Mmax, par_mu0 = dim_list.values()
+
+    # Compute derivative of mu_ranger function
+    # This tells us the ratio of investing in rangers vs area
+    if dataset.lower().startswith('e'):
+        prolifer = (par_p0 * par_q * par_k - par_c0) / \
+                   (par_p0 * par_q * par_k + par_cF) / par_gamma / par_f * par_Mmax / par_mu0
+
+    elif dataset.lower().startswith('k'):
+        prolifer = (par_p0 * par_q * par_k - par_c0) / \
+                   (par_p0 * par_q * par_k + par_cF) / par_gamma / par_f * par_Mmax
+
+    else:
+        raise ValueError('dataset not in ["elephant", "kuempel"]. Cannot use for "wildebeest".')
+
+    return prolifer
 
 
 def exist_slope(money_area, nondim_list, dataset):
@@ -285,6 +360,47 @@ def S_equals_0(small_dim_list):
     return condition
 
 
+def generate_slopes(dim_range, num_it, dataset):
+    """
+    Compute the existence condition slope given parameter values sampled uniformly from a specified range of values.
+    Repeat this num_it times and return a list of the results.
+
+    :param dim_range: (dict of lists) the dictionary of dimensional parameters and their corresponding range of values
+    :param num_it: (int) number of iterations for each parameter
+    :param dataset: (str) "elephant" or "kuempel"
+
+    :return: list of parameter combinations that result in a bubble
+
+    Note 1: for parameters not used in the proliferation calculation, just use e.g. {'b': [0.1, 0.1]}
+    Note 2: parameter ranges must satisfy p0*q*k >= c0, otherwise there's no poaching and there is no existence condition to examine
+    """
+    # Initialise list of slope values
+    slope_values = [0] * num_it
+
+    # Compute value of the slope num_it times
+    for ii in range(num_it):
+        # Generate random values for parameters from specified range of values
+
+        dim_list = {'b': rand.uniform(*dim_range['b']),
+                    'm': rand.uniform(*dim_range['m']),
+                    'k': rand.uniform(*dim_range['k']),
+                    'q': rand.uniform(*dim_range['q']),
+                    'alpha': rand.uniform(*dim_range['alpha']),
+                    'p0': rand.uniform(*dim_range['p0']),
+                    'gamma': rand.uniform(*dim_range['gamma']),
+                    'c0': rand.uniform(*dim_range['c0']),
+                    'cF': rand.uniform(*dim_range['cF']),
+                    'f': rand.uniform(*dim_range['f']),
+                    'par_coeff': rand.uniform(*dim_range['par_coeff']),
+                    'par_nonlin': rand.uniform(*dim_range['par_nonlin'])
+                    }
+
+        # Calculate the proliferation rate of the existence condition given the random parameter values
+        slope_values[ii] = proliferation(dim_list, dataset)
+
+    return slope_values
+
+
 def check_for_bubble(dim_list, num_it, dataset):
     """
     Check if any of the parameter combinations can result in a bubble, varying parameter values by one order
@@ -300,7 +416,7 @@ def check_for_bubble(dim_list, num_it, dataset):
     multiply_array = np.arange(1 / 10, 10 + 99 / 10 / num_it, 99 / 10 / num_it)
 
     params = dict((key, val * multiply_array) for key, val in dim_list.items())
-
+    # Initialise list of parameter combos that result in a bubble
     bubble_params = []
 
     count = 0
@@ -350,9 +466,9 @@ def check_for_bubble(dim_list, num_it, dataset):
                         raise ValueError('dataset not in ["elephant", "kuempel"]. Cannot use for "wildebeest".')
 
                     # Display loop % completion to user
-                    # count += 1
-                    # if count % 32000 == 0:
-                    #     print("{:.2f}% completed".format(count / (len(multiply_array) ** 5) * 100))
+                    count += 1
+                    if count % 32000 == 0:
+                        print("{:.2f}% completed".format(count / (len(multiply_array) ** 5) * 100))
 
     # Print percentage of param combinations that result in a bubble
 
@@ -649,7 +765,7 @@ def sens_analysis(param_name, num_it, area_interval, num_p, dim_list, dataset):
         nondim_list = {'psi': par_psi, 'delta': par_delta, 'nu': par_nu, 'sigma': par_sigma, 'f': params['f'],
                        'par_coeff': params['par_coeff'], 'par_nonlin': params['par_nonlin']}
 
-        # Compute the derivative of existance condition
+        # Compute the existence condition
         exist_line = exist_cond(mu_area_ar, nondim_list, dataset)
 
         # Store results in dictionary along with the parameter value
@@ -663,7 +779,7 @@ def sens_analysis(param_name, num_it, area_interval, num_p, dim_list, dataset):
 
 def sens_analysis_full(num_it, area_interval, num_p, dim_list, nondim_list, dataset, fontsz, save, fname):
     """
-        The plan: pick a parameter to do sensitivity analysis on. For num_it iterations, multiply parameter
+        The plan: for each parameter in dim_list, for num_it iterations, multiply parameter
          by a factor between 1 and 10. Then compute nondim params and compute the slope of exist cond.
         :param num_it: (int) number of different parameter values for sensitivity analysis
         :param area_interval: (list) [area money lower bound, area money upper bound]
@@ -692,7 +808,7 @@ def sens_analysis_full(num_it, area_interval, num_p, dim_list, nondim_list, data
         sens_par = sens_analysis(par, num_it, [area_interval[0], area_interval[1]], num_p, dim_list, dataset)
 
         # Extract parameter values from the dictionary keys list
-        sens_keys = [k for k in sens_par.keys()]
+        sens_keys = [ki for ki in sens_par.keys()]
 
         # Create figure for plotting the slope of existence condition, with dimensions 10x10
         fig = plt.figure(figsize=(10, 10))
@@ -722,13 +838,63 @@ def sens_analysis_full(num_it, area_interval, num_p, dim_list, nondim_list, data
         fig.show()
 
         if save:
-            savename = '{}Sensitivity_analysis\\{}_{}_{}'.format(fname, 'sens_analysis', dataset, par)
+            savename = f'{fname}Sensitivity_analysis\\sens_analysis_{dataset}_{par}'
             fig.savefig(savename)
 
     return
 
 
-def main(dim_list, mu_ran_final, mu_area_final, num_p, dataset, ax, fileloc, pname, plot_slope, save_plot):
+def make_histogram(dim_range, num_it, dataset, fontsz, fname, save):
+    """
+        Create a histogram of no-poaching/existence condition threshold slope values using
+         randomly sampled parameter sets
+
+        :param dim_range: (dict of lists) the dictionary of dimensional parameters and their corresponding range of values
+        :param num_it: (int) number of iterations for each parameter
+        :param dataset: (str) "elephant" or "kuempel"
+        :param fontsz: (list): list of font sizes [axes, axtick, legend]
+        :param fname: (str) Folder location to save figure
+        :param save: (bool) True if save the histogram plot, False otherwise
+
+        :return: histogram
+        """
+
+    slope_vals = generate_slopes(dim_range, num_it, dataset)
+
+    # Create figure for plotting the histogram with dimensions 10x10
+    fig = plt.figure(figsize=(10, 10))
+    # Add plot in figure, 1st subplot in plot with 1 row & 1 column
+    ax = fig.add_subplot(111)
+
+    # Use Freedman-Diaconis estimator for no. of bins
+    ax.hist(slope_vals, log=True, rwidth=0.75, bins='fd', label='Observations')
+    # Plot vertical lines for the median and mean observed slop value
+    ax.vlines(x=np.median(slope_vals), ymin=0, ymax=1000, colors='r', label=f'Median: {np.median(slope_vals):.2}')
+    ax.vlines(x=np.mean(slope_vals), ymin=0, ymax=1000, colors='r', linestyles='dashed',
+               label=f'Mean: {np.mean(slope_vals):.2}')
+
+    ax.set_xlabel('Proliferation rate of the no-poaching threshold', fontsize=fontsz[0])
+    ax.set_ylabel('Number of parameter sets ', fontsize=fontsz[0])
+    ax.set_title(f'Histogram of no-poaching slope\n (n={num_it} parameter sets)', fontsize=fontsz[0])
+    ax.legend(fontsize=fontsz[2])
+    fig.show()
+
+    # How many slopes are less than 1?
+    print(f"Number of slopes <1: {sum(np.array(slope_vals) < 1)},"
+          f" (i.e. {sum(np.array(slope_vals) < 1) / num_it}% of {num_it} sampled parameter sets.")
+
+    print(f"Median slope value is med = {np.median(slope_vals)}, mean is mu = {np.mean(slope_vals)}")
+
+    print(f'Min slope value is {min(slope_vals)}, max is {max(slope_vals)}.')
+
+    if save:
+        savename = f'{fname}slope_histogram_n{num_it}.png'
+        fig.savefig(savename)
+
+    return slope_vals
+
+
+def main(dim_list, mu_ran_final, mu_area_final, num_p, dataset, ax, fontsz, fileloc, pname, plot_slope, save_plot):
     """
     Creates and displays the investment plot and investment slope plot
     :param dim_list: (dict) parameters for dimensional model
@@ -739,6 +905,7 @@ def main(dim_list, mu_ran_final, mu_area_final, num_p, dataset, ax, fileloc, pna
     :param fileloc: (str) folder location to save plot
     :param ax: (ax object or None) can pass an existing axis to the function, or leave as None if you want
                     to create an axis object in the investment_plot function
+    :param fontsz: (list): list of font sizes [axes, axtick, legend]
     :param plot_slope: (bool) True if you want to plot the investment line derivative, False otherwise.
     :param save_plot: (bool) True if you want to save the investment plot, False otherwise.
     :param pname: (str) name for the plot, goes on end of file name when saving
@@ -756,8 +923,8 @@ def main(dim_list, mu_ran_final, mu_area_final, num_p, dataset, ax, fileloc, pna
     sigma = par_alpha * par_gamma * par_cF / (par_b - par_m)
 
     # Create lists of the nondimensional and dimensional parameters
-    nondim_params = {'psi': psi, 'delta': delta, 'nu': nu, 'sigma': sigma, 'f': par_f,
-                     'par_coeff': par_Mmax, 'par_nonlin': par_mu0}
+    nondim_list = {'psi': psi, 'delta': delta, 'nu': nu, 'sigma': sigma, 'f': par_f,
+                   'par_coeff': par_Mmax, 'par_nonlin': par_mu0}
 
     # ----------------------------- MAKING THE PLOT -----------------------------
 
@@ -771,23 +938,22 @@ def main(dim_list, mu_ran_final, mu_area_final, num_p, dataset, ax, fileloc, pna
 
     # Graphical parameters
     plot_colours = ['#bdbdbd', 'k']  # Plot colours [S contour fill, S contour line/exist cond line]
-    fontsizes = [28, 28, 28]  # Font sizes for axis labels, axis ticks, legend
 
     # Make the investment plot
     fig1, ax1, exist_line = investment_plot([0, mu_ran_final], [1, mu_area_final], num_p,
-                                            nondim_params, dim_params, plot_path=False,
+                                            nondim_list, dim_list, plot_path=False,
                                             invest_init=invest_IC, invest_size=invest_amount,
                                             num_steps=invest_steps, dataset=dataset_name,
-                                            lwid=5, clist=plot_colours, fontsz=fontsizes, save=save_plot,
+                                            lwid=5, clist=plot_colours, fontsz=fontsz, save=save_plot,
                                             fname=fileloc, pname=pname, ax=ax)
 
     # Make the existence cond. derivative plot
     if plot_slope:
-        fig2, ax2 = investment_slope([0, mu_ran_final], [1, mu_area_final], num_p, nondim_params, dim_params,
+        fig2, ax2 = investment_slope([0, mu_ran_final], [1, mu_area_final], num_p, nondim_list, dim_list,
                                      dataset=dataset, lwid=5, clist=plot_colours,
-                                     fontsz=fontsizes, save=False, fname=fileloc, pname=pname)
+                                     fontsz=fontsz, save=False, fname=fileloc, pname=pname)
 
-    return fig1, ax1
+    return fig1, ax1, nondim_list
 
 
 # ------------- THE MAIN PROGRAM -------------
@@ -796,8 +962,13 @@ filename = r'Z:\\Elephant_project\\Code\\Plots\\'
 
 wrn.simplefilter('error', UserWarning)
 
+# Set random seed
+rand.seed(42)
+
 # ------------- Model parameters -------------
-num_points = 5000  # Number of points in each array (needs to be the same)
+num_points = 5000  # Number of points in each array, used for investment plot (needs to be the same)
+
+fontsizes = [28, 28, 28]  # Font sizes for axis labels, axis ticks, legend
 
 alpha = 1e-5  # poacher effort adjustment rate (Source: Holden & Lockyer, 2021)
 
@@ -931,12 +1102,40 @@ dim_params = {'b': b, 'm': m, 'k': k, 'q': q, 'alpha': alpha, 'p0': p0, 'gamma':
               'c0': c0, 'cF': cF, 'f': f, 'par_coeff': par_coeff, 'par_nonlin': par_nonlin}
 
 # ------------- Run the investment plot program -------------
-the_fig, the_ax = main(dim_list=dim_params, mu_ran_final=mu_ran_max, mu_area_final=mu_area_max, num_p=num_points,
-                       dataset=dataset_name, ax=None,
-                       fileloc=filename, pname=f'money_mu{mu_ran_max:.2}_{dataset_name}_usd.pdf',
-                       plot_slope=False, save_plot=False)
+the_fig, the_ax, nondim_params = main(dim_list=dim_params, mu_ran_final=mu_ran_max, mu_area_final=mu_area_max,
+                                      num_p=num_points, dataset=dataset_name, ax=None, fontsz=fontsizes,
+                                      fileloc=filename, pname=f'money_mu{mu_ran_max:.2}_{dataset_name}_usd.pdf',
+                                      plot_slope=False, save_plot=False)
 
 # ------------- Run the sensitivity analysis -------------
 # num_sim = 100
 # sens_analysis_full(num_sim, [mu_area_min, mu_max], num_points, dim_params, nondim_params,
 #                    dataset_name, fontsizes, save=False, fname=filename)
+
+# # Check what p. derivative values are in the bubble region
+# area_val = 0.3e6
+# ranger_val = 1e8
+# derivs = p_deriv(ranger_val, area_val, nondim_params, 'elephant')
+# cells = M_func(par_coeff, par_nonlin, area_val, 'elephant')
+# rangers = lambda_func(f, ranger_val)
+# # elephants = prop. of carry cap * carry cap/cell * cells
+# print(f"Change in elephants = {[i*k*cells for i in derivs]}")
+# print(f"ranger/cell = {rangers/cells}")
+
+# Histogram of the existence condition slope values
+dim_param_range = {'b': [0.33, 0.33],
+                   'm': [0.27, 0.27],
+                   'k': [1000, 100000],
+                   'q': [0.00256, 0.51],
+                   'alpha': [1e-5, 1e-5],
+                   'p0': [200, 5000],   # Need p0>200 and k> 1000 so that p0*q*k > c0 for all parameter combinations.
+                   'gamma': [0.02, 0.5],# otherwise, there's no poaching and the model doesn't make sense
+                   'c0': [5, 5000],
+                   'cF': [10, 10000],
+                   'f': [1 / 1067683.571, 1 / 94900],
+                   'par_coeff': [2.31e-09, 5e-03],
+                   'par_nonlin': [1, 1]  # Approx. Mmax/mu0 with constant price of area
+                   }
+
+slope_dict = make_histogram(dim_param_range, num_it=10000, dataset='elephant',
+                            fontsz=[28, 28, 20], fname=filename, save=True)
