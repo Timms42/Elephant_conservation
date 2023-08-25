@@ -38,6 +38,7 @@ v14.0:- created a main function
 v15:- started a function to make numerical investment plot for a more complex system of DEs
     - added function for more complex system of DEs with nonlinear relationship between enforcement and poaching
    .2:- completed the function to make numerical investment plot for a more complex system of DEs
+   .3:- switched to an ODE solver that detects and handles stiff ODEs (LSODA)
 """
 
 import matplotlib.pyplot as plt
@@ -46,6 +47,8 @@ import scipy.integrate as sci
 import warnings as wrn
 import random as rand
 import time as time
+
+
 # from tqdm import tqdm
 
 
@@ -156,7 +159,7 @@ def lambda_func(par_f, money_array):
     return lambda_val
 
 
-def gamma_func(num_area, num_rangers, par_gamma, par_coeff):
+def gamma_func(num_area, num_rangers, par_gamma, par_attack, par_power):
     """
     Computes perceived catchability of poachers by rangers as a function of current ranger density.
     C1(x) = gamma*a*x^2/(1 + ax^2), where x is ranger density. Slope is 0 at x=0, and asymptotes at gamma as x->infinity.
@@ -165,23 +168,28 @@ def gamma_func(num_area, num_rangers, par_gamma, par_coeff):
     :param num_area: (float) current number of area cells
     :param num_rangers: (float) current number of rangers hired in total
     :param par_gamma: (float) catchability coefficient gamma from linear functional response/law of mass-action
-    :param par_coeff: (float) scaling coefficient - default 1
+    :param par_attack: (float) scaling coefficient, equivalent to attack rate in Holling type III functional response
+    :param par_power: (float) raise density to the power of par_power
     :return: (float)
     """
 
-    density = num_rangers / num_area
-    perceived_gamma = par_gamma * par_coeff * density ** 2 / (1 + par_coeff * density ** 2)
+    # Compute density**k, where k is given in par_power
+    density_to_k = np.power(num_rangers / num_area, par_power)
 
-    # Bound the perceived_gamma at 1, since it should be a proportion. The function gamma is nonnegative by nature.
-    return min(perceived_gamma, 1)
+    perceived_gamma = par_gamma * par_coeff * density_to_k / (1 + par_attack * density_to_k)
+
+    # Note that this function for gamma is bounded by 0 and 1, so it can represent a proportion.
+    return perceived_gamma
 
 
-def complex_model(t, z, money_area, money_ranger, dim_list):
+def complex_model(t, z, money_area, money_ranger, par_attack, par_power, dim_list):
     """
     :param t: time. used for scipy.solve_ivp
     :param z: (float or array) state variables N, E
     :param money_area: (float) current money invested in area
     :param money_ranger: (float) current money invested in area
+    :param par_attack: (float) scaling coefficient, equivalent to attack rate in Holling type III functional response
+    :param par_power: (float) raise density to the power of par_power
     :param dim_list: (dict) parameters for dimensionalised model,{b, m, k, q, alpha, p0, a, gamma, c0, cf, f, Mmax, mu0}
 
     :return: array
@@ -200,7 +208,7 @@ def complex_model(t, z, money_area, money_ranger, dim_list):
     density = num_rangers / num_area
 
     # Compute poachers' perceived catchability by rangers, which factors into expected cost of poaching.
-    gamma_coeff = gamma_func(num_area, num_rangers, par_gamma, par_coeff=1)
+    gamma_coeff = gamma_func(num_area, num_rangers, par_gamma, par_attack, par_power)
 
     Ndot = ((par_b - par_m) * (1 - N / par_k) - par_q * E) * N
     Edot = par_alpha * E * ((1 - gamma_coeff * density) * par_p0 * par_q * N - par_c0 - gamma_coeff * par_cf * density)
@@ -680,7 +688,7 @@ def investment_plot(ran_interval, area_interval, num_p, nondim_list, dim_list, p
     plt.show()
 
     if save:
-        savename = '{}Implicit_cop_area\\{}'.format(fname, pname)
+        savename = f'{fname}\\{pname}'
         fig.savefig(savename)
 
     return fig, ax, exist_curve
@@ -751,7 +759,7 @@ def investment_slope(ran_interval, area_interval, num_p, nondim_list, dim_list, 
     fig.show()
 
     if save:
-        savename = '{}Implicit_cop_area\\{}'.format(fname, pname)
+        savename = f'{fname}\\{pname}'
         fig.savefig(savename)
 
     return fig, ax
@@ -931,13 +939,16 @@ def make_histogram(dim_range, num_it, dataset, fontsz, fname, save):
     return slope_vals
 
 
-def numerical_investment(dim_list, mu_ran_final, mu_area_final, tf, num_p, cols, mksize, fontsz, fname, save):
+def numerical_investment(dim_list, mu_ran_final, mu_area_final, par_attack, par_power, tf, num_p,
+                         cols, mksize, fontsz, fname, save):
     """
     Create investment plot for the complex model by numerically simulating the stable equilibrium and then numerically
     approximating partial derivatives. The larger p derivative indicates if managers should invest in area or rangers.
     :param dim_list: (dict) parameters for dimensional model
     :param mu_ran_final: (float) the largest current investment size in rangers for plotting
     :param mu_area_final: (float) the largest current investment size in area for plotting
+    :param par_attack: (float) scaling coefficient, equivalent to attack rate in Holling type III functional response
+    :param par_power: (float) raise density to the power of par_power
     :param tf: (float) numerically solve ODEs to this end time
     :param num_p: (int) number of points to plot for each axis
     :param cols: (list of str/hex code) list of colours for markers [invest in rangers, invest in area]
@@ -955,7 +966,8 @@ def numerical_investment(dim_list, mu_ran_final, mu_area_final, tf, num_p, cols,
     ax = fig.add_subplot(111)
 
     # Set relatively high ICs, so it should converge to stable equilibrium
-    N0, P0 = 0.9 * k, 0.2 * (b - m) / q
+    N0 = 0.9 * k
+    P0 = 0.2 * (b - m) / q
 
     # Logspace the points from 10 up to the maximum investments specified
     mu_area_range = np.linspace(start=1, stop=mu_area_final, num=num_p)
@@ -966,22 +978,31 @@ def numerical_investment(dim_list, mu_ran_final, mu_area_final, tf, num_p, cols,
 
     # For each investment value in area and rangers, numerically solve ODE for long time
     # to approximate the stable equilibrium.
-    for mu_a in mu_area_range:    # tqdm() adds a cool progress bar
+    for mu_a in mu_area_range:  # tqdm() adds a cool progress bar
 
-        improvement = ['-']*len(mu_ranger_range)
+        improvement = ['-'] * len(mu_ranger_range)
 
         for ii in range(len(mu_ranger_range)):
             mu_r = mu_ranger_range[ii]  # The current value of ranger investment
 
-            # equil = sci.solve_ivp(complex_model, t_span=[t0, tf], y0=[N0, P0], args=(mu_a, mu_r, dim_list))
+            # equil = sci.solve_ivp(complex_model, t_span=[t0, tf], y0=[N0, P0],
+            # args=(mu_a, mu_r, par_attack, par_power, dim_list), method='LSODA)
 
-            # Compute the equilibrium population with an increase in area investment
+            # Compute the equilibrium population with an increase in area investment.
+            # Use LSODA to detect and handle stiffness, probably caused by very large ranger densities for some inputs
             equil_more_area = sci.solve_ivp(complex_model, t_span=[0, tf], y0=[N0, P0],
-                                            args=(mu_a + 10, mu_r, dim_list))
+                                            args=(mu_a + 10, mu_r, par_attack, par_power, dim_list),
+                                            method='LSODA')
+            # Time to compute change wrt area investment
+            finish_area_change = time.perf_counter()
 
             # Compute the equilibrium population with an increase in ranger investment
             equil_more_ranger = sci.solve_ivp(complex_model, t_span=[0, tf], y0=[N0, P0],
-                                              args=(mu_a, mu_r + 10, dim_list))
+                                              args=(mu_a, mu_r + 10, par_attack, par_power, dim_list),
+                                              method='LSODA')
+
+            # Time to compute change wrt ranger investment
+            finish_more_ranger = time.perf_counter()
 
             # Calculate the improvement in equilibrium population (= y.[0,-1]) based on investing in rangers or area.
             # improvement > 0 if rangers is better, <0 if area is better
@@ -995,8 +1016,10 @@ def numerical_investment(dim_list, mu_ran_final, mu_area_final, tf, num_p, cols,
             count += 1  # Current iteration
 
             # Progress bar
-            if count % int(num_it/100) == 0:
-                print(f'{count / num_it * 100:.0f}% complete')
+            if count % int(num_it / 40) == 0:
+                # \r so print returns to previous line, overwrites it
+                print(f'{count / num_it * 100:.1f}% complete', end='\r')
+
         # Finish ranger investment loop
 
         # Plot the points for each ranger investment, for a fixed area investment
@@ -1011,11 +1034,20 @@ def numerical_investment(dim_list, mu_ran_final, mu_area_final, tf, num_p, cols,
     ax.set_ylabel('Current USD invested in rangers', fontsize=fontsz[0])
     ax.axis([0, mu_area_final, 0, mu_ran_final])
 
+    # Add in parameter text to the plot
+    params_text = (f'C(lambda/n): a={par_attack}, k={par_power}\nPoints={num_p}x{num_p}, tfinal={tf}'
+                   f'\ngrey->invest in area, white->invest in rangers')
+    ax.annotate(params_text, (0.3 * mu_area_final, 0.3*mu_ran_final), fontsize=12)
+
+    # Add a star for the current investment in area and rangers for Zambia.
+    # See Google sheet 'model_parameters.xlsx' for source.
+    plt.scatter(x=13389548.33, y=101033450.3, s=200, c='k', marker='*')
+
     fig.show()
 
     # Save the plot if save==True
     if save:
-        savename = f'{fname}money_ranger_area_numerical_{num_p}_{mu_area_final:.0e}.pdf'
+        savename = f'{fname}money_ranger_area_numerical_a{par_attack}_{num_p}_{mu_area_final:.0e}_tf{tf}.pdf'
         fig.savefig(savename)
 
     return fig, ax
@@ -1085,7 +1117,7 @@ def main(dim_list, mu_ran_final, mu_area_final, num_p, dataset, ax, fontsz, file
 
 # ------------- THE MAIN PROGRAM -------------
 # File location
-filename = 'Z:\\Elephant_project\\Code\\Plots\\'
+filename = 'Z:\\Elephant_project\\Code\\Plots\\New_plots\\'
 
 wrn.simplefilter('error', UserWarning)
 
@@ -1093,9 +1125,6 @@ wrn.simplefilter('error', UserWarning)
 rand.seed(42)
 
 # ------------- Model parameters -------------
-# num_points = 100  # Number of points in each array, used for investment plot (needs to be the same)
-num_points = int(input("How many points do you want in each array? "))
-
 fontsizes = [28, 28, 28]  # Font sizes for axis labels, axis ticks, legend
 
 alpha = 1e-5  # poacher effort adjustment rate (Source: Holden & Lockyer, 2021)
@@ -1146,8 +1175,8 @@ if dataset_name.lower().startswith('e'):
         par_nonlin = 19339344  # mu0 parameter. Source: as above
 
         # Max values for mu_rangers and mu_area for the contour plot
-        mu_ran_max = 1e6
-        mu_area_max = 1e5  # Change x-axis limit
+        mu_ran_max = 2e8
+        mu_area_max = 3e7 # Change x-axis limit
 
 
     elif real_or_bubble.lower().startswith('b'):
@@ -1233,10 +1262,12 @@ dim_params = {'b': b, 'm': m, 'k': k, 'q': q, 'alpha': alpha, 'p0': p0, 'gamma':
 
 # ------------- Run the investment plot program -------------
 if input("Create investment plot with simple enforcement? (y/n)").lower().startswith('y'):
+    num_points = 100  # Number of points in each array, used for investment plot (needs to be the same)
+
     the_fig, the_ax, nondim_params = main(dim_list=dim_params, mu_ran_final=mu_ran_max, mu_area_final=mu_area_max,
                                           num_p=num_points, dataset=dataset_name, ax=None, fontsz=fontsizes,
                                           fileloc=filename, pname=f'money_mu{mu_ran_max:.2}_{dataset_name}_usd.pdf',
-                                          plot_slope=False, save_plot=False)
+                                          plot_slope=False, save_plot=True)
 
 # ------------- Run the sensitivity analysis -------------
 if input("Do sensitivity analysis on model with simple enforcement? (y/n)").lower().startswith('y'):
@@ -1251,8 +1282,8 @@ if input("Do sensitivity analysis on model with simple enforcement? (y/n)").lowe
     cells = M_func(par_coeff, par_nonlin, area_val, 'elephant')
     rangers = lambda_func(f, ranger_val)
     # elephants = prop. of carry cap * carry cap/cell * cells
-    print(f"Change in elephants = {[i*k*cells for i in derivs]}")
-    print(f"ranger/cell = {rangers/cells}")
+    print(f"Change in elephants = {[i * k * cells for i in derivs]}")
+    print(f"ranger/cell = {rangers / cells}")
 
 if input("Make a histogram of the slope values for the existence condition? (y/n)").lower().startswith('y'):
     # Histogram of the existence condition slope values
@@ -1275,11 +1306,10 @@ if input("Make a histogram of the slope values for the existence condition? (y/n
 
 # ------------- Numerical investment plot with complex catchability -------------
 # Marker size to cover a d x d plot (in points) with a marker width of sqrt(s), given n markers, is s = (d/n)^2
+# if input("Make a numerical investment plot? (y/n)").lower().startswith('y'):
+num_points = 200
 
-time_short = time.perf_counter()
+invest = numerical_investment(dim_params, mu_ran_max, mu_area_max, par_attack=1, par_power=2, tf=1500,
+                              num_p=num_points, cols=['#ffffff', '#bdbdbd'], mksize=(12 * 72 / num_points) ** 2,
+                              fontsz=fontsizes, fname=filename, save=True)
 
-invest = numerical_investment(dim_params, mu_ran_max, mu_area_max, tf=500,
-                                                  num_p=num_points, cols=['k', 'r'], mksize=(12*72/num_points)**2,
-                                                  fontsz=fontsizes, fname=filename, save=True)
-
-time_short = time.perf_counter() - time_short
