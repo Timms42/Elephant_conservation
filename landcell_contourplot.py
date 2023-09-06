@@ -1,7 +1,7 @@
 """
 Author: Liam Timms 44368768
 Created: 18/05/2022
-Modified: 23/08/2023
+Modified: 06/09/2023
 Simpler model - no scavenging -> logistic growth
 Convert density X into absolute number Xpop = X*A
 Add line indicating where (X*,Y* ) exists
@@ -162,7 +162,7 @@ def lambda_func(par_f, money_array):
 def gamma_func(num_area, num_rangers, par_gamma, par_attack, par_power):
     """
     Computes perceived catchability of poachers by rangers as a function of current ranger density.
-    C1(x) = gamma*a*x^2/(1 + ax^2), where x is ranger density. Slope is 0 at x=0, and asymptotes at gamma as x->infinity.
+    C1(x) = gamma*a*x^k/(1 + ax^k), where x is ranger density. Slope is 0 at x=0, and asymptotes at gamma as x->infinity.
     Contrast this with law of mass-action, which has C2(x) = gamma. C1 <= C2 for all x.
     Return min(C1(x), 1) so that the catchability is bounded by 1.
     :param num_area: (float) current number of area cells
@@ -174,9 +174,9 @@ def gamma_func(num_area, num_rangers, par_gamma, par_attack, par_power):
     """
 
     # Compute density**k, where k is given in par_power
-    density_to_k = np.power(num_rangers / num_area, par_power)
+    density_pow_k = np.power(num_rangers / num_area, par_power)
 
-    perceived_gamma = par_gamma * par_coeff * density_to_k / (1 + par_attack * density_to_k)
+    perceived_gamma = par_gamma * par_attack * density_pow_k / (1 + par_attack * density_pow_k)
 
     # Note that this function for gamma is bounded by 0 and 1, so it can represent a proportion.
     return perceived_gamma
@@ -939,7 +939,7 @@ def make_histogram(dim_range, num_it, dataset, fontsz, fname, save):
     return slope_vals
 
 
-def numerical_investment(dim_list, mu_ran_final, mu_area_final, par_attack, par_power, tf, num_p,
+def numerical_investment(dim_list, mu_ran_final, mu_area_final, mu_step, par_attack, par_power, tf, num_p,
                          cols, mksize, fontsz, fname, save):
     """
     Create investment plot for the complex model by numerically simulating the stable equilibrium and then numerically
@@ -947,6 +947,7 @@ def numerical_investment(dim_list, mu_ran_final, mu_area_final, par_attack, par_
     :param dim_list: (dict) parameters for dimensional model
     :param mu_ran_final: (float) the largest current investment size in rangers for plotting
     :param mu_area_final: (float) the largest current investment size in area for plotting
+    :param mu_step: (float) step size for finite difference derivative calculations
     :param par_attack: (float) scaling coefficient, equivalent to attack rate in Holling type III functional response
     :param par_power: (float) raise density to the power of par_power
     :param tf: (float) numerically solve ODEs to this end time
@@ -988,17 +989,17 @@ def numerical_investment(dim_list, mu_ran_final, mu_area_final, par_attack, par_
             # equil = sci.solve_ivp(complex_model, t_span=[t0, tf], y0=[N0, P0],
             # args=(mu_a, mu_r, par_attack, par_power, dim_list), method='LSODA)
 
-            # Compute the equilibrium population with an increase in area investment.
+            # Compute the equilibrium population with an increase in area investment (finite difference)
             # Use LSODA to detect and handle stiffness, probably caused by very large ranger densities for some inputs
             equil_more_area = sci.solve_ivp(complex_model, t_span=[0, tf], y0=[N0, P0],
-                                            args=(mu_a + 10, mu_r, par_attack, par_power, dim_list),
+                                            args=(mu_a + mu_step, mu_r, par_attack, par_power, dim_list),
                                             method='LSODA')
             # Time to compute change wrt area investment
             finish_area_change = time.perf_counter()
 
-            # Compute the equilibrium population with an increase in ranger investment
+            # Compute the equilibrium population with an increase in ranger investment (finite difference).
             equil_more_ranger = sci.solve_ivp(complex_model, t_span=[0, tf], y0=[N0, P0],
-                                              args=(mu_a, mu_r + 10, par_attack, par_power, dim_list),
+                                              args=(mu_a, mu_r + mu_step, par_attack, par_power, dim_list),
                                               method='LSODA')
 
             # Time to compute change wrt ranger investment
@@ -1037,7 +1038,7 @@ def numerical_investment(dim_list, mu_ran_final, mu_area_final, par_attack, par_
     # Add in parameter text to the plot
     params_text = (f'C(lambda/n): a={par_attack}, k={par_power}\nPoints={num_p}x{num_p}, tfinal={tf}'
                    f'\ngrey->invest in area, white->invest in rangers')
-    ax.annotate(params_text, (0.3 * mu_area_final, 0.3*mu_ran_final), fontsize=12)
+    ax.annotate(params_text, (0.3 * mu_area_final, 0.3 * mu_ran_final), fontsize=12)
 
     # Add a star for the current investment in area and rangers for Zambia.
     # See Google sheet 'model_parameters.xlsx' for source.
@@ -1047,8 +1048,49 @@ def numerical_investment(dim_list, mu_ran_final, mu_area_final, par_attack, par_
 
     # Save the plot if save==True
     if save:
-        savename = f'{fname}money_ranger_area_numerical_a{par_attack}_{num_p}_{mu_area_final:.0e}_tf{tf}.pdf'
+        savename = f'{fname}money_ranger_area_numerical_a{par_attack}_p{num_p}_{mu_area_final:.0e}_tf{tf}.pdf'
         fig.savefig(savename)
+
+    return fig, ax
+
+
+def gamma_plot(ran_density, a_vals, par_gamma, fontsz, fname, save):
+    """
+    :param ran_density: (list-like) list of ranger densities for plotting
+    :param a_vals: (list-like) list of a vaulues for plotting nonlinear gamma function
+    :param par_gamma: (float) catchability coefficient gamma from linear functional response/law of mass-action
+    :param fontsz: (list): list of font sizes [axes, axtick, legend]
+    :param fname: (str) Folder location to save figure
+    :param save: (bool) True if save the histogram plot, False otherwise
+    :return: figure
+    """
+    # Plot gamma function against ranger density
+    fig = plt.figure(figsize=(12, 12))
+    ax = fig.add_subplot(111)
+
+    # Plot gamma function with varying ranger densities, given a=1 and real gamma value of 0.043
+    # ALso plot constant C(lambda/n) = gamma lambda/n
+    line_constant = ax.plot(ran_density, par_gamma * np.ones(len(ranger_density)),
+                            color='k', linewidth=2, label='constant')[0]  # Constant gamma
+    for a_val in a_vals:
+        # plot_colour = plt.cm.Greys(a_val/10)  # Can alternate colour for each line
+        plot_colour = 'grey'
+        # By setting num_area=1, ranger_density/num_area = ranger_density, and we can input these into gamma_func
+        line_holling = ax.plot(ran_density, gamma_func(1, ran_density, par_gamma=par_gamma, par_attack=a_val,
+                                                    par_power=2), color=plot_colour, linewidth=1, label='holling3')[0]
+
+    ax.set_title('perceived catchability of poachers by rangers\n against ranger density, for varying attack rates.',
+                 fontsize=fontsz[0])
+    ax.set_xlabel('Ranger density, \u03BB/n', fontsize=fontsz[0])
+    ax.set_ylabel('Perceived catchability, C(\u03BB/n)', fontsize=fontsz[0])
+    ax.legend(handles=[line_constant, line_holling], fontsize=fontsz[2])
+
+    ax.annotate(f'C(x) = gamma*a*x^k/(1+a*x^k),\nk=2, a\u2208{a_vals}', (0.25 * max(ran_density), 0.75 * par_gamma),
+                fontsize=fontsz[0] / 2)
+
+    fig.show()
+    if save:
+        fig.savefig(f'{fname}\\money_ranger_area_gamma_function.pdf')
 
     return fig, ax
 
@@ -1129,18 +1171,15 @@ fontsizes = [28, 28, 28]  # Font sizes for axis labels, axis ticks, legend
 
 alpha = 1e-5  # poacher effort adjustment rate (Source: Holden & Lockyer, 2021)
 
+num_points = 1000
+
 # Parameters for nonlinear price of land area
 cell_size = 706  # Size of area cells in km2. Based on circle of radius 15km  (Source: Hofer, 2000)
 
 dataset_name = input('Choose a parameter set ("e": elephant, "k": kuempel, or "w": wildebeest), or type "q" to quit: ')
-while dataset_name not in ['e', 'k', 'w']:
+while dataset_name not in ['e', 'k', 'w', 'q']:
     print('Input must be one of "e", "k", or "w". Please try again, or type "quit" to quit')
-    dataset_name = input('Choose a parameter set ("e": elephant, "k": kuempel, or "w": wildebeest): ')
-
-    if dataset_name.lower() == 'quit':
-        break
-    else:
-        continue
+    dataset_name = input('Choose a parameter set ("e": elephant, "k": kuempel, "w": wildebeest, "q": quit): ')
 
 if dataset_name.lower().startswith('e'):
     # Use elephant parameter set and run the program
@@ -1175,8 +1214,8 @@ if dataset_name.lower().startswith('e'):
         par_nonlin = 19339344  # mu0 parameter. Source: as above
 
         # Max values for mu_rangers and mu_area for the contour plot
-        mu_ran_max = 2e8
-        mu_area_max = 3e7 # Change x-axis limit
+        mu_ran_max = 2e9
+        mu_area_max = 1e8  # Change x-axis limit
 
 
     elif real_or_bubble.lower().startswith('b'):
@@ -1189,8 +1228,8 @@ if dataset_name.lower().startswith('e'):
         par_nonlin = 193393.44
 
         # Max values for mu_rangers and mu_area for the contour plot
-        mu_ran_max = 1e8
-        mu_area_max = 1e6  # Use smaller x-axis limit
+        mu_ran_max = 2e9
+        mu_area_max = 1e8  # Use smaller x-axis limit
 
     else:
         print("Did not enter a valid choice for 'real' or bubble'")
@@ -1253,6 +1292,9 @@ elif dataset_name.lower().startswith('w'):
     # f = 1 / (20 * 0.91)  # (Source: Holden et al., 2018)
     f = 1 / 94900  # Lifetime discounted cost, based on $20USD/day from Holden et al. 2018
 
+elif dataset_name.lower().startswith('q'):
+    print("Successfully quit")
+
 else:
     # Do not run the program
     print("Dataset name not in 'elephant', 'kuempel', or 'wildebeest'. Weird.")
@@ -1266,7 +1308,8 @@ if input("Create investment plot with simple enforcement? (y/n)").lower().starts
 
     the_fig, the_ax, nondim_params = main(dim_list=dim_params, mu_ran_final=mu_ran_max, mu_area_final=mu_area_max,
                                           num_p=num_points, dataset=dataset_name, ax=None, fontsz=fontsizes,
-                                          fileloc=filename, pname=f'money_mu{mu_ran_max:.2}_{dataset_name}_usd.pdf',
+                                          fileloc=filename,
+                                          pname=f'money_mu{mu_ran_max:.2}_{dataset_name}_usd_test.pdf',
                                           plot_slope=False, save_plot=True)
 
 # ------------- Run the sensitivity analysis -------------
@@ -1306,10 +1349,17 @@ if input("Make a histogram of the slope values for the existence condition? (y/n
 
 # ------------- Numerical investment plot with complex catchability -------------
 # Marker size to cover a d x d plot (in points) with a marker width of sqrt(s), given n markers, is s = (d/n)^2
-# if input("Make a numerical investment plot? (y/n)").lower().startswith('y'):
-num_points = 200
+if input("Make a numerical investment plot? (y/n)").lower().startswith('y'):
 
-invest = numerical_investment(dim_params, mu_ran_max, mu_area_max, par_attack=1, par_power=2, tf=1500,
-                              num_p=num_points, cols=['#ffffff', '#bdbdbd'], mksize=(12 * 72 / num_points) ** 2,
-                              fontsz=fontsizes, fname=filename, save=True)
+    for attack_rate in [1, 5, 10]:
+        invest = numerical_investment(dim_params, mu_ran_max, mu_area_max, mu_step=10, par_attack=attack_rate,
+                                      par_power=2, tf=1400,
+                                      num_p=num_points, cols=['#ffffff', '#bdbdbd'], mksize=(12 * 72 / num_points) ** 2,
+                                      fontsz=fontsizes, fname=filename, save=True)
 
+# ------------- Plot the gamma functions -------------
+if input("Create plot of gamma functions? (y/n)").lower().startswith('y'):
+    attack_array = np.arange(1, 10, 1)
+    ranger_density = np.arange(start=0, stop=2, step=0.01)
+
+    fig3, ax3 = gamma_plot(ranger_density, attack_array, par_gamma=gamma, fontsz=fontsizes, fname=filename, save=True)
