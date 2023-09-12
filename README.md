@@ -3,7 +3,7 @@ Code for numerical ODE analysis, data analysis, and plots for Timms & Holden (20
 
 "ode_phase_portrait.py" generates Figures 1a and b, the phase portraits.
 
-"landcell_contourplot.py" generates Figures 2, 3, 4, the optimal investment plots, as well as Figure A.2, the histogram of the investment ratios.
+"conservation_model_analysis.py" generates Figures 2, 3, 4, the optimal investment plots, as well as Figure A.2, the histogram of the investment ratios.
 
 "zambia_webpage_scraper.py" pulls real estate data from Zambia Real Estate, and "zambia_data_analysis.R" uses this to generate Figure A.1.
 "tanzania_webpage_scraper" scrapes a website for Tanzanian real estate data.
