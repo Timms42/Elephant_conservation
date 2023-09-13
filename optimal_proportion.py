@@ -1,5 +1,5 @@
 """
-Author: Liam Timms 44368768/uqltimm1
+Author: Liam Timms (UQ 44368768/uqltimm1)
 Created: 11/09/2023
 Program just to do numerical optimisation of the complex ODE system w.r.t. the proportion of money
 invested in rangers.
@@ -11,6 +11,7 @@ import scipy.integrate as sci
 from scipy.optimize import minimize_scalar, shgo
 import random as rand
 import time as time
+
 
 def M_func(par_a, par_b, money_array):
     """
@@ -70,14 +71,14 @@ def gamma_func(num_area, num_rangers, par_gamma, par_attack, par_power):
     return perceived_gamma
 
 
-def equilibrum(mu_a, mu_r, dim_list):
+def equilibrium(mu_a, mu_r, dim_list):
     """
     Compute the analytic equilibrium for the simple model (total population over area)
     :param mu_a: (float) current money invested in area
     :param mu_r: (float) current money invested in area
     :param dim_list: (dict) parameters for dimensionalised model,{b, m, k, q, alpha, p0, a, gamma, c0, cf, f, Mmax, mu0}
 
-    :return (array) n*Xstar(lambda, n)
+    :return (array) n * Nstar(lambda, n)
     """
 
     # Unpack dimensional parameters
@@ -86,18 +87,11 @@ def equilibrum(mu_a, mu_r, dim_list):
     num_area = M_func(par_Mmax, par_mu0, mu_a)
     num_rangers = lambda_func(par_f, mu_r)
 
-    par_nu = par_alpha * par_c0 / (par_b - par_m)
-    par_sigma = par_alpha * par_gamma * par_cf / (par_b - par_m)
-    par_psi = par_alpha * par_p0 * par_q * par_k / (par_b - par_m)
-    par_delta = par_alpha * par_p0 * par_q * par_k * par_gamma / (par_b - par_m)
+    density = num_rangers / num_area
 
-    ranger_density = num_rangers / num_area
-
-    equil = num_area * par_k * (par_nu + par_sigma * ranger_density) / (par_psi - par_delta * ranger_density)
-
-    # equil2 = (par_c0 * num_area + par_gamma * par_cf * num_rangers) / (par_p0 * par_q * par_k * (1-par_gamma) * ranger_density)
-
-    return equil
+    # return num_area * (par_c0 + par_cf * par_gamma * density) / (par_p0 * par_q * (1 - par_gamma) * density)
+    # TESTING ONLY - try for a single cell
+    return (par_c0 + par_cf * par_gamma * density) / (par_p0 * par_q * (1 - par_gamma) * density)
 
 
 def simple_model(t, y, money_area, money_ranger, par_attack, par_power, dim_list, model):
@@ -109,7 +103,7 @@ def simple_model(t, y, money_area, money_ranger, par_attack, par_power, dim_list
     :param par_attack: (float) scaling coefficient, equivalent to attack rate in Holling type III functional response
     :param par_power: (float) raise density to the power of par_power
     :param dim_list: (dict) parameters for dimensionalised model,{b, m, k, q, alpha, p0, a, gamma, c0, cf, f, Mmax, mu0}
-    :param tol: (float>0) error tolerance for ODE solver
+    :param model: 'simple' or 'complex'
     :return: array
     """
     # Unpack state variables for num elephants N and poaching effort E
@@ -122,13 +116,39 @@ def simple_model(t, y, money_area, money_ranger, par_attack, par_power, dim_list
     num_rangers = lambda_func(par_f, money_ranger)
     num_area = M_func(par_Mmax, par_mu0, money_area)
 
-    # Compute the density of rangers over the protected area
-    density = num_rangers / num_area
-
-    Ndot = ((par_b - par_m) * (1 - N / par_k) - par_q * E) * N
-    Edot = par_alpha * E * ((1 - par_gamma * density) * par_p0 * par_q * N - par_c0 - par_gamma * par_cf * density)
+    Ndot = (par_b - par_m) * (1 - N / par_k) * N - par_q * N * E
+    Edot = (par_alpha * (1 - par_gamma * num_rangers / num_area) * par_p0 * par_q * N * E
+            - par_alpha * (par_c0 + par_gamma * par_cf * num_rangers / num_area) * E)
 
     return [Ndot, Edot]
+
+
+def new_simple_model(t, y, money_area, money_ranger, par_attack, par_power, dim_list, model):
+    """
+    :param t: time. used for scipy.solve_ivp
+    :param z: (float or array) state variables N, E
+    :param money_area: (float) current money invested in area
+    :param money_ranger: (float) current money invested in area
+    :param par_attack: (float) scaling coefficient, equivalent to attack rate in Holling type III functional response
+    :param par_power: (float) raise density to the power of par_power
+    :param dim_list: (dict) parameters for dimensionalised model,{b, m, k, q, alpha, p0, a, gamma, c0, cf, f, Mmax, mu0}
+    :param model: 'simple' or 'complex'
+    :return: array
+    """
+
+    N, E = y
+
+    # Number of rangers
+    num_r = lambda_func(dim_list['f'], money_ranger)
+    num_a = M_func(dim_list['par_coeff'], dim_list['par_nonlin'], money_area)
+
+    density = num_r / num_a
+
+    dNdt = (dim_list['b'] - dim_list['m']) * (1 - N / dim_list['k']) * N - dim_list['q'] * N * E
+    dEdt = dim_list['alpha'] * (1 - dim_list['gamma'] * density) * dim_list['p0'] * dim_list['q'] * N * E \
+           - dim_list['alpha'] * (dim_list['c0'] + dim_list['cF'] * dim_list['gamma'] * density) * E
+
+    return np.array([dNdt, dEdt])
 
 
 def complex_model(t, y, money_area, money_ranger, par_attack, par_power, dim_list, model):
@@ -140,7 +160,7 @@ def complex_model(t, y, money_area, money_ranger, par_attack, par_power, dim_lis
     :param par_attack: (float) scaling coefficient, equivalent to attack rate in Holling type III functional response
     :param par_power: (float) raise density to the power of par_power
     :param dim_list: (dict) parameters for dimensionalised model,{b, m, k, q, alpha, p0, a, gamma, c0, cf, f, Mmax, mu0}
-    :param tol: (float>0) tolerance for terminating numerical integration
+    :param model: 'simple' or 'complex'
     :return: (array) value of time derivative dNdt and dEdt
     """
     # Unpack state variables for num elephants N and poaching effort E
@@ -175,7 +195,7 @@ def model_jacobian(t, y, money_area, money_ranger, par_attack, par_power, dim_li
     :param par_attack:
     :param par_power:
     :param dim_list:
-    :param model:
+    :param model: 'simple' or 'complex'
     :return:
     """
     # Unpack state variables for num elephants N and poaching effort E
@@ -214,30 +234,35 @@ def model_jacobian(t, y, money_area, money_ranger, par_attack, par_power, dim_li
     F2_E = C * N - D
 
     # Return the Jacobian
-    return np.array([[F1_N, F1_E], [F2_N, F2_E]])
+    # TESTING ONLY
+    print(f'F11 = {F1_N}, F12 = {F1_E}\nF21 = {F2_N}, F22 = {F2_E}')
+    return np.array([[F1_N, F1_E], [F2_N, F2_E]], dtype=float)
 
 
-def create_time_series(func, prop, money, par_attack, par_power, tf, dim_list, model, solver):
+def create_time_series(prop, money, par_attack, par_power, tf, init_cond, dim_list, model, solver):
     """
-    :param func:
     :param prop:
     :param money:
     :param par_attack:
     :param par_power:
     :param tf:
+    :param init_cond: (list) list of initial conditions [N0, P0]
     :param dim_list:
-    :param model:
-    :param solver:
-    :return:
+    :param model: 'simple' or 'complex'
+    :param solver: 'LSODA', 'Radau', or other solver supported by solve_ivp()
+
+    :return: None
     """
-    init_cond = [0.9 * k, 0.2 * (b - m) / q]
+    # Function handle for ODE system to simulate
+    func = complex_model if model == 'complex' else new_simple_model
 
     mu_a = (1 - prop) * money
     mu_r = prop * money
 
     equil = sci.solve_ivp(fun=func, t_span=[0, tf], y0=init_cond,
                           args=(mu_a, mu_r, par_attack, par_power, dim_list, model),
-                          jac=model_jacobian, method=solver, max_step=1e5)
+                          # jac=model_jacobian, # TESTING ONLY
+                          method=solver, max_step=1e5)
 
     t_vals, N_vals, E_vals = equil.t, equil.y[0], equil.y[1]
     # Get final 25% of indices in list of time values for simulation with area investment
@@ -245,13 +270,17 @@ def create_time_series(func, prop, money, par_attack, par_power, tf, dim_list, m
 
     # average over final 25% of N values
     late_time_mean = np.mean(N_vals[late_time_index])
+    late_time_median = np.median(N_vals[late_time_index])
 
     plt.plot(t_vals, N_vals, 'k', label='Elephants')
-    plt.hlines(late_time_mean, t_vals[0], t_vals[-1], '#d95f02', linestyles='solid', label=f"Mean={late_time_mean:.1e}")
+    plt.plot(t_vals, E_vals, 'r', label='Poachers')
+    plt.hlines(late_time_mean, t_vals[0], t_vals[-1], '#d95f02', linestyles='solid', label=f"Mean={late_time_mean:.1f}")
+    plt.hlines(late_time_median, t_vals[0], t_vals[-1], '#1b9e77', linestyles='solid', label=f"Median={late_time_median:.1f}")
     if model == 'simple':
         # If this is the simple model, plot the analytic equilibrium as a horizontal line
-        analytic_equil = equilibrum(mu_a, mu_r, dim_list)
-        plt.hlines(analytic_equil, t_vals[0], t_vals[-1], '#7570b3', linestyles='dashed', label=f"Equil.={analytic_equil:.1e}")
+        analytic_equil = equilibrium(mu_a, mu_r, dim_list)
+        plt.hlines(analytic_equil, t_vals[0], t_vals[-1], '#7570b3', linestyles='dashed',
+                   label=f"Equil.={analytic_equil:.1f}")
         print(f'% difference between late-time mean and analytic equilibrium ='
               f' {abs(late_time_mean - analytic_equil):.2f}')
 
@@ -259,9 +288,10 @@ def create_time_series(func, prop, money, par_attack, par_power, tf, dim_list, m
               f'\nattack rate {par_attack}, tf={tf}')
     plt.xlabel('Time')
     plt.legend()
+    plt.ylim([0, 5*analytic_equil])
     plt.show()
 
-    return
+    return N_vals, E_vals
 
 
 def objective(prop, *args):
@@ -301,7 +331,8 @@ def objective(prop, *args):
 
     equil = sci.solve_ivp(fun=func, t_span=[0, tf], y0=init_cond,
                           args=(mu_a, mu_r, par_attack, par_power, dim_list, model),
-                          jac=model_jacobian, method=solver, max_step=1e5)
+                          # jac=model_jacobian, # TESTING ONLY
+                          method=solver, max_step=1e5)
 
     t_vals, N_vals, E_vals = equil.t, equil.y[0], equil.y[1]
     # Get final 25% of indices in list of time values for simulation with area investment
@@ -335,11 +366,12 @@ def optimal_proportions(model, max_money, init_cond, num_p, par_attack, par_powe
     for ii in range(len(money_array)):
 
         # TESTING ONLY
-        sol = shgo(func=lambda x: objective(x,  model, money_array[ii], init_cond, par_attack, par_power, tf, solver, dim_list),
-                   bounds=[(0, 1)],
-                   n=200,  # Number of sampling points
-                   sampling_method='halton'
-                   )
+        sol = shgo(
+            func=lambda x: objective(x, model, money_array[ii], init_cond, par_attack, par_power, tf, solver, dim_list),
+            bounds=[(0, 1)],
+            n=200,  # Number of sampling points
+            sampling_method='halton'
+            )
         # sol = minimize_scalar(fun=objective,  # Note: objective minimises the negative population
         #                       bounds=[0, 1],
         #                       method='bounded',
@@ -389,12 +421,20 @@ dim_params = {'b': b, 'm': m, 'k': k, 'q': q, 'alpha': alpha, 'p0': p0, 'gamma':
 # PARAMETERS - complex model
 attack_rate = 1  # 1e8
 power_k = 2
-tfinal = 1400
-ICs = [0.9 * k, 0.2 * (b - m) / q]
+tfinal = 50000
 total_money = 2e8
+ICs = [k/2, 2]
 the_model = 'simple'
 the_solver = 'LSODA'
 num_points = 1000
+
+# TESTING ONLY
+test_prop = 0.4
+test_mua = (1-test_prop)*total_money
+test_mur = test_prop*total_money
+test_area = M_func(dim_params['par_coeff'], dim_params['par_nonlin'], test_mua)
+test_rangers = lambda_func(dim_params['f'], test_mur)
+test_density = test_rangers/test_area
 
 # ------------------------------------------
 # BLACK BOX OPTIMISATION
@@ -406,17 +446,46 @@ num_points = 1000
 #                          options=dict(disp=True), tol=1e-8
 #                          )
 # Use a lambda function here to specify the extra arguments of objective() since shgo() currently has a bug
-result = shgo(
-    func=lambda x: objective(x, the_model, total_money, ICs, attack_rate, power_k, tfinal, the_solver, dim_params),
-    bounds=[(0, 1)],
-    n=200,  # Number of sampling points
-    sampling_method='halton'
-    )
+# result = shgo(
+#     func=lambda x: objective(x, the_model, total_money, ICs, attack_rate, power_k, tfinal, the_solver, dim_params),
+#     bounds=[(0, 1)],
+#     n=100,  # Number of sampling points
+#     sampling_method='halton'
+# )
+
+# # TESTING ONLY - Naive Euler's method
+# step = 1e-5
+# N_vec, E_vec = np.zeros(int(np.ceil(tfinal/step))), np.zeros(int(np.ceil(tfinal/step)))
+# N_vec[0], E_vec[0] = ICs    # ODE is for one cell, so make ICs about one cell
+# t_vec = np.arange(0, tfinal, step)
+# for ii in range(len(N_vec)-1):
+#     # Current values
+#     N_prev, E_prev = N_vec[ii], E_vec[ii]
+#     # Derivatives at current values
+#     dNdt = (dim_params['b'] - dim_params['m']) * (1 - N_prev / dim_params['k']) * N_prev - dim_params['q'] * N_prev * E_prev
+#     dEdt = dim_params['alpha'] * (1 - dim_params['gamma'] * test_density) * dim_params['p0'] * dim_params['q'] * N_prev * E_prev \
+#            - dim_params['alpha'] * (dim_params['c0'] + dim_params['cF'] * dim_params['gamma'] * test_density) * E_prev
+#
+#     # Next values
+#     N_vec[ii+1] = N_prev + step * dNdt
+#     E_vec[ii+1] = E_prev + step * dNdt
+#
+#     print(f't={t_vec[ii]}', end='\r')
+#
+# #
+# plt.plot(t_vec, test_area*N_vec, 'b', label='elephant')
+# # plt.plot(t_vec, test_area*E_vec, 'r', label='poacher')
+# # Equilibrium is for whole PA, so make populations scaled to whole area
+# plt.hlines(equilibrium(test_mua, test_mur, dim_params), 0, tfinal, 'r', linestyles='dashed')
+# plt.legend()
+# plt.title(f'Elephant and poacher population across entire PA (n={test_area})')
+# plt.show()
+# # TESTING ONLY
 
 if input('Create population time series (y/n)').lower().startswith('y'):
     # Plot time series for random proportion value
-    create_time_series(complex_model, 0.4, total_money,
-                       attack_rate, power_k, 1400, dim_params, the_model, 'Radau')
+    x, y = create_time_series(test_prop, total_money,
+                       attack_rate, power_k, tfinal, ICs, dim_params, the_model, 'Radau')
 
 # ------------------------------------------
 if input('Plot equilibrium pop. against proportion (y/n)').lower().startswith('y'):
