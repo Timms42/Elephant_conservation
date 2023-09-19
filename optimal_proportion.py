@@ -78,7 +78,7 @@ def equilibrium(mu_a, mu_r, dim_list):
     :param mu_r: (float) current money invested in area
     :param dim_list: (dict) parameters for dimensionalised model,{b, m, k, q, alpha, p0, a, gamma, c0, cf, f, Mmax, mu0}
 
-    :return (array) n * Nstar(lambda, n)
+    :return (array) n * Nstar(lambda, n) the equilibrium population across the entire protected area
     """
 
     # Unpack dimensional parameters
@@ -89,38 +89,14 @@ def equilibrium(mu_a, mu_r, dim_list):
 
     density = num_rangers / num_area
 
-    # return num_area * (par_c0 + par_cf * par_gamma * density) / (par_p0 * par_q * (1 - par_gamma) * density)
-    # TESTING ONLY - try for a single cell
-    return (par_c0 + par_cf * par_gamma * density) / (par_p0 * par_q * (1 - par_gamma) * density)
+    # # Original equation
+    # equil_pop = num_area * (par_c0 + par_cf * par_gamma * density) / (par_p0 * par_q * (1 - par_gamma * density))
 
+    # Equivalent equation that is defined for n=0
+    equil_pop = (num_area ** 2 * par_c0 + par_cf * par_gamma * num_rangers * num_area) / (
+            par_p0 * par_q * (num_area - par_gamma * num_rangers))
 
-def simple_model(t, y, money_area, money_ranger, par_attack, par_power, dim_list, model):
-    """
-    :param t: time. used for scipy.solve_ivp
-    :param z: (float or array) state variables N, E
-    :param money_area: (float) current money invested in area
-    :param money_ranger: (float) current money invested in area
-    :param par_attack: (float) scaling coefficient, equivalent to attack rate in Holling type III functional response
-    :param par_power: (float) raise density to the power of par_power
-    :param dim_list: (dict) parameters for dimensionalised model,{b, m, k, q, alpha, p0, a, gamma, c0, cf, f, Mmax, mu0}
-    :param model: 'simple' or 'complex'
-    :return: array
-    """
-    # Unpack state variables for num elephants N and poaching effort E
-    N, E = y
-
-    # Unpack dimensional parameters
-    par_b, par_m, par_k, par_q, par_alpha, par_p0, par_gamma, par_c0, par_cf, par_f, par_Mmax, par_mu0 = dim_list.values()
-
-    # Calculate current number of rangers hired and amount of area as functions of money invested
-    num_rangers = lambda_func(par_f, money_ranger)
-    num_area = M_func(par_Mmax, par_mu0, money_area)
-
-    Ndot = (par_b - par_m) * (1 - N / par_k) * N - par_q * N * E
-    Edot = (par_alpha * (1 - par_gamma * num_rangers / num_area) * par_p0 * par_q * N * E
-            - par_alpha * (par_c0 + par_gamma * par_cf * num_rangers / num_area) * E)
-
-    return [Ndot, Edot]
+    return equil_pop
 
 
 def new_simple_model(t, y, money_area, money_ranger, par_attack, par_power, dim_list, model):
@@ -148,7 +124,7 @@ def new_simple_model(t, y, money_area, money_ranger, par_attack, par_power, dim_
     dEdt = dim_list['alpha'] * (1 - dim_list['gamma'] * density) * dim_list['p0'] * dim_list['q'] * N * E \
            - dim_list['alpha'] * (dim_list['c0'] + dim_list['cF'] * dim_list['gamma'] * density) * E
 
-    return np.array([dNdt, dEdt])
+    return [dNdt, dEdt]
 
 
 def complex_model(t, y, money_area, money_ranger, par_attack, par_power, dim_list, model):
@@ -234,37 +210,58 @@ def model_jacobian(t, y, money_area, money_ranger, par_attack, par_power, dim_li
     F2_E = C * N - D
 
     # Return the Jacobian
-    # TESTING ONLY
-    print(f'F11 = {F1_N}, F12 = {F1_E}\nF21 = {F2_N}, F22 = {F2_E}')
     return np.array([[F1_N, F1_E], [F2_N, F2_E]], dtype=float)
 
 
-def create_time_series(prop, money, par_attack, par_power, tf, init_cond, dim_list, model, solver):
+def create_time_series(prop, money, par_attack, par_power, tf, init_cond, dim_list, model, **kwargs):
     """
-    :param prop:
-    :param money:
-    :param par_attack:
-    :param par_power:
-    :param tf:
+    :param prop: (float) proportion of money invested in rangers
+    :param money: (float) total money invested across rangers and area
+    :param par_attack: (float) scaling coefficient, equivalent to attack rate in Holling type III functional response
+    :param par_power: (float) raise density to the power of par_power
+    :param tf: (float) stopping time for ODE numerical integration
     :param init_cond: (list) list of initial conditions [N0, P0]
-    :param dim_list:
+    :param dim_list: (dict) parameters for dimensionalised model,{b, m, k, q, alpha, p0, a, gamma, c0, cf, f, Mmax, mu0}
     :param model: 'simple' or 'complex'
-    :param solver: 'LSODA', 'Radau', or other solver supported by solve_ivp()
+    :param kwargs: optional arguments 'solver' and 'max_step' for numerical ODE solver
 
-    :return: None
+    :return: (figure, axis) plot of the population time series
     """
+
+    # Create figure for plotting the investment plot, with dimensions 12x12
+    fig = plt.figure(figsize=(12, 12))
+    # Add plot in figure, 1st subplot in plot with 1 row & 1 column
+    ax = fig.add_subplot(111)
+
+    # Default solver for ODE integration. Should be LSODA for complex and Radau for simple
+    solver = 'LSODA' if model == 'complex' else 'Radau'
+    # Default maximum step size for chosen ODE solver
+    max_step = 1000 if model == 'complex' else 1e5
+
+    # If the user specifies an ODE solver and a max. step size, use these
+    for key in kwargs:
+        if key == 'solver':
+            solver = kwargs[key]
+        elif key == 'max_step':
+            max_step = kwargs[key]
+        else:
+            raise TypeError(f'{key} is an invalid keyword argument for create_time_series()')
+
     # Function handle for ODE system to simulate
     func = complex_model if model == 'complex' else new_simple_model
 
     mu_a = (1 - prop) * money
     mu_r = prop * money
+    # Calculate current total area
+    num_area = M_func(dim_list['par_coeff'], dim_list['par_nonlin'], mu_a)
 
     equil = sci.solve_ivp(fun=func, t_span=[0, tf], y0=init_cond,
                           args=(mu_a, mu_r, par_attack, par_power, dim_list, model),
-                          # jac=model_jacobian, # TESTING ONLY
-                          method=solver, max_step=1e5)
+                          jac=model_jacobian,
+                          method=solver, max_step=max_step)
 
-    t_vals, N_vals, E_vals = equil.t, equil.y[0], equil.y[1]
+    # Multiply by total area to get total population
+    t_vals, N_vals, E_vals = equil.t, num_area * equil.y[0], num_area * equil.y[1]
     # Get final 25% of indices in list of time values for simulation with area investment
     late_time_index = range(int(0.75 * len(t_vals)), len(t_vals))
 
@@ -272,29 +269,40 @@ def create_time_series(prop, money, par_attack, par_power, tf, init_cond, dim_li
     late_time_mean = np.mean(N_vals[late_time_index])
     late_time_median = np.median(N_vals[late_time_index])
 
-    plt.plot(t_vals, N_vals, 'k', label='Elephants')
-    plt.plot(t_vals, E_vals, 'r', label='Poachers')
-    plt.hlines(late_time_mean, t_vals[0], t_vals[-1], '#d95f02', linestyles='solid', label=f"Mean={late_time_mean:.1f}")
-    plt.hlines(late_time_median, t_vals[0], t_vals[-1], '#1b9e77', linestyles='solid', label=f"Median={late_time_median:.1f}")
+    ax.plot(t_vals, N_vals, 'k', label='Elephants')
+    ax.plot(t_vals, E_vals, 'r', label='Poachers')
+    ax.hlines(late_time_mean, t_vals[0], t_vals[-1], '#d95f02', linestyles='dashed', label=f"Mean={late_time_mean:.1f}")
+    ax.hlines(late_time_median, t_vals[0], t_vals[-1], '#1b9e77', linestyles='dashed',
+              label=f"Median={late_time_median:.1f}")
+
     if model == 'simple':
         # If this is the simple model, plot the analytic equilibrium as a horizontal line
         analytic_equil = equilibrium(mu_a, mu_r, dim_list)
-        plt.hlines(analytic_equil, t_vals[0], t_vals[-1], '#7570b3', linestyles='dashed',
-                   label=f"Equil.={analytic_equil:.1f}")
+        ax.hlines(analytic_equil, t_vals[0], t_vals[-1], '#7570b3', linestyles='dashed',
+                  label=f"Equil.={analytic_equil:.1f}")
+
         print(f'% difference between late-time mean and analytic equilibrium ='
-              f' {abs(late_time_mean - analytic_equil):.2f}')
+              f' {abs(late_time_mean - analytic_equil) / analytic_equil * 100:.2f}%')
 
-    plt.title(f'Time series of {"simple" if model == "simple" else "complex"} with prop. {prop},'
-              f'\nattack rate {par_attack}, tf={tf}')
-    plt.xlabel('Time')
-    plt.legend()
-    plt.ylim([0, 5*analytic_equil])
-    plt.show()
+    try:
+        # Set the y-axis limit to be 5 times the analytic equilibrium
+        ax.set_ylim([0, 5 * analytic_equil])
+    except NameError:
+        # If analytic_equil is not defined, use long-time mean as the y-axis limit
+        ax.set_ylim([0, 10 * late_time_mean])
 
-    return N_vals, E_vals
+    ax.set_title(f'Time series of total population {"simple" if model == "simple" else "complex"} model'
+                 f'\n with prop. {prop}, attack rate {par_attack}, tf={tf}, solver={solver}'
+                 f'\nmax_step={max_step}')
+    ax.set_xlabel('Time t')
+    ax.set_ylabel('Total population across PA, N(t) and E(t)')
+    ax.legend()
+    fig.show()
+
+    return fig, ax, t_vals, N_vals, E_vals
 
 
-def objective(prop, *args):
+def objective(prop, *args, **kwargs):
     """
     Create investment plot for the complex model by numerically simulating the stable equilibrium and then numerically
     approximating partial derivatives. The larger p derivative indicates if managers should invest in area or rangers.
@@ -307,32 +315,38 @@ def objective(prop, *args):
     :param par_attack: (float) scaling coefficient, equivalent to attack rate in Holling type III functional response
     :param par_power: (float) raise density to the power of par_power
     :param tf: (float) numerically solve ODEs to this end time
-    :param solver: (str) name of an ODE solver supported by solve_ivp. E.g. 'LSODA', 'RK45', 'Radau'
     :param dim_list: (dict) parameters for dimensional model
+    :param kwargs: optional arguments 'solver' and 'max_step' for numerical ODE solver
 
     :return: long-time average population (float)
     """
 
-    model, money, init_cond, par_attack, par_power, tf, solver, dim_list = args
+    model, money, init_cond, par_attack, par_power, tf, dim_list = args
+
+    solver = 'LSODA' if model == 'complex' else 'Radau'
+    max_step = 1000 if model == 'complex' else 1e5
+    # If the user specifies an ODE solver and a max. step size, use these
+    for key in kwargs:
+        if key == 'solver':
+            solver = kwargs[key]
+        elif key == 'max_step':
+            max_step = kwargs[key]
+        else:
+            raise TypeError(f'{key} is an invalid keyword argument for objective()')
+
     mu_a = (1 - prop) * money
     mu_r = prop * money
 
-    num_rangers = lambda_func(dim_list['f'], mu_r)
     num_area = M_func(dim_list['par_coeff'], dim_list['par_nonlin'], mu_a)
 
-    if model.lower().startswith('s'):  # simple model
-        func = simple_model
-
-    elif model.lower().startswith('c'):  # complex model
-        func = complex_model
-
-    else:
-        raise ValueError('Invalid model selection for "model" input in numerical_investment()')
+    # If the user specifies complex_model, use LSODA solver with a max_step of 1000 so we can
+    # simulate it for long time with stability. For simple_model, use Radu and and max_step is fine.
+    func = complex_model if model == 'complex' else new_simple_model
 
     equil = sci.solve_ivp(fun=func, t_span=[0, tf], y0=init_cond,
                           args=(mu_a, mu_r, par_attack, par_power, dim_list, model),
-                          # jac=model_jacobian, # TESTING ONLY
-                          method=solver, max_step=1e5)
+                          # jac=model_jacobian,
+                          method=solver, max_step=max_step)
 
     t_vals, N_vals, E_vals = equil.t, equil.y[0], equil.y[1]
     # Get final 25% of indices in list of time values for simulation with area investment
@@ -344,7 +358,83 @@ def objective(prop, *args):
     return -late_time_mean * num_area
 
 
-def optimal_proportions(model, max_money, init_cond, num_p, par_attack, par_power, tf, dim_list, solver):
+def create_population_plot(money, par_attack, par_power, tf, init_cond, num_it, dim_list, model, **kwargs):
+    """
+    Plot the equilibrium population size as a function of proportion of money invested in rangers
+    :param money: (float) total money invested across rangers and area
+    :param par_attack: (float) scaling coefficient, equivalent to attack rate in Holling type III functional response
+    :param par_power: (float) raise density to the power of par_power
+    :param tf: (float) stopping time for ODE numerical integration
+    :param init_cond: (list) list of initial conditions [N0, P0]
+    :param num_it: (int) number of proportions in [0,1] to simulate
+    :param dim_list: (dict) parameters for dimensionalised model,{b, m, k, q, alpha, p0, a, gamma, c0, cf, f, Mmax, mu0}
+    :param model: 'simple' or 'complex'
+    :param kwargs: optional arguments 'solver' and 'max_step' for numerical ODE solver
+
+    :return: (figure, axis) plot of the equilibrium population against proportion
+    """
+
+    # Default solver for ODE integration. Should be LSODA for complex and Radau for simple
+    solver = 'LSODA' if model == 'complex' else 'Radau'
+    # Default maximum step size for chosen ODE solver
+    max_step = 1000 if model == 'complex' else 1e5
+
+    # If the user specifies an ODE solver and a max. step size, use these
+    for key in kwargs:
+        if key == 'solver':
+            solver = kwargs[key]
+        elif key == 'max_step':
+            max_step = kwargs[key]
+        else:
+            raise TypeError(f'{key} is an invalid keyword argument for create_population_plot()')
+
+    # Create an array of the proportions between 0 and 1, and initialise array for the population values
+    epsilon = 1e-3  # Small number since 1 is a bad value
+    pvals = np.linspace(0, 1 - epsilon, num_it)
+    yvals = np.zeros(np.size(pvals))
+
+    for ii in range(len(pvals)):
+        # For each proportion, compute the long-time population value
+
+        # Note: objective returns the negative population for minimisation
+        yvals[ii] = -objective(pvals[ii], model, money, init_cond,
+                               par_attack, par_power, tf, dim_params, solver=solver, max_step=max_step)
+        # TESTING ONLY
+        # except RuntimeWarning:
+        #     # If there's a problem in evaluating the objective, raise an error and return the pval causing the issue
+        #     print(f'Bad value: {pvals[ii]}')
+        #     raise RuntimeError
+        #
+        # except ValueError:
+        #     print(f'Bad value: {pvals[ii]}')
+
+        # Print progress counter in steps of 0.1%
+        print(f'{ii / num_it * 100:.1f}% complete', end='\r')
+        if ii == num_points:
+            print('Complete\n', end='\r')
+
+    # Create figure for plotting the investment plot, with dimensions 12x12
+    fig = plt.figure(figsize=(12, 12))
+    # Add plot in figure, 1st subplot in plot with 1 row & 1 column
+    ax = fig.add_subplot(111)
+
+    if model == 'simple':
+        ax.plot(pvals, equilibrium((1 - pvals) * money, pvals * money, dim_list), 'b--', label='Analytic equil.')
+
+    ax.plot(pvals, yvals, 'k', label='Equil. pop.')
+    ax.set_title('Late-time pop. average against proportion of money invested in rangers'
+                 f'\nattack={attack_rate}, tf={tfinal}, money={money}, {the_model} model')
+    ax.set_xlabel('Proportion p')
+    ax.set_ylabel('Late-time population size')
+    # ax.set_ylim([0, max(yvals)])
+    ax.legend()
+    fig.show()
+    # Return list of p values where solver didn't converge (ie final pop is negative)
+    noncoverge = [pvals[ii] for ii in range(len(pvals)) if yvals[ii] < 0]
+    return fig, ax, noncoverge
+
+
+def optimal_proportions(model, max_money, init_cond, num_p, par_attack, par_power, tf, dim_list, **kwargs):
     """
     Create an array of optimal proportions, given an array of investment values and a number of points
     :param model: (str) 'simple' or 'complex' for which ODE system the user wants to simulate
@@ -354,9 +444,26 @@ def optimal_proportions(model, max_money, init_cond, num_p, par_attack, par_powe
     :param par_attack: (float) scaling coefficient, equivalent to attack rate in Holling type III functional response
     :param par_power: (float) raise density to the power of par_power
     :param tf: (float) numerically solve ODEs to this end time
-    :param solver: (str) name of an ODE solver supported by solve_ivp. E.g. 'LSODA', 'RK45', 'Radau'
     :param dim_list: (dict) parameters for dimensional model
+    :param kwargs: optional arguments 'solver' and 'max_step' for numerical ODE solver
+
+    :return: array of money values, array of optimal proportion values
     """
+
+    # Default solver for ODE integration. Should be LSODA for complex and Radau for simple
+    solver = 'LSODA' if model == 'complex' else 'Radau'
+    # Default maximum step size for chosen ODE solver
+    max_step = 1000 if model == 'complex' else 1e5
+
+    # If the user specifies an ODE solver and a max. step size, use these
+    for key in kwargs:
+        if key == 'solver':
+            solver = kwargs[key]
+        elif key == 'max_step':
+            max_step = kwargs[key]
+        else:
+            raise TypeError(f'{key} is an invalid keyword argument for optimal_proportion()')
+
     # Array of total money values
     money_array = np.linspace(1, max_money, num_p)
 
@@ -366,12 +473,13 @@ def optimal_proportions(model, max_money, init_cond, num_p, par_attack, par_powe
     for ii in range(len(money_array)):
 
         # TESTING ONLY
+        epsilon = 1e-3  # Small number to subtract from p=1 since 1 is a bad value
         sol = shgo(
-            func=lambda x: objective(x, model, money_array[ii], init_cond, par_attack, par_power, tf, solver, dim_list),
-            bounds=[(0, 1)],
-            n=200,  # Number of sampling points
+            func=lambda p: objective(p, model, money_array[ii], init_cond, par_attack, par_power, tf, dim_list, **kwargs),
+            bounds=[(0, 1 - epsilon)],
+            n=100,  # Number of sampling points
             sampling_method='halton'
-            )
+        )
         # sol = minimize_scalar(fun=objective,  # Note: objective minimises the negative population
         #                       bounds=[0, 1],
         #                       method='bounded',
@@ -421,20 +529,12 @@ dim_params = {'b': b, 'm': m, 'k': k, 'q': q, 'alpha': alpha, 'p0': p0, 'gamma':
 # PARAMETERS - complex model
 attack_rate = 1  # 1e8
 power_k = 2
-tfinal = 50000
+tfinal = 100000
 total_money = 2e8
-ICs = [k/2, 2]
+proportion = 0.4
+ICs = [k / 2, 2]
 the_model = 'simple'
-the_solver = 'LSODA'
 num_points = 1000
-
-# TESTING ONLY
-test_prop = 0.4
-test_mua = (1-test_prop)*total_money
-test_mur = test_prop*total_money
-test_area = M_func(dim_params['par_coeff'], dim_params['par_nonlin'], test_mua)
-test_rangers = lambda_func(dim_params['f'], test_mur)
-test_density = test_rangers/test_area
 
 # ------------------------------------------
 # BLACK BOX OPTIMISATION
@@ -445,76 +545,46 @@ test_density = test_rangers/test_area
 #                          args=(the_model, total_money, ICs, attack_rate, power_k, tfinal, the_solver, dim_params),
 #                          options=dict(disp=True), tol=1e-8
 #                          )
-# Use a lambda function here to specify the extra arguments of objective() since shgo() currently has a bug
-# result = shgo(
-#     func=lambda x: objective(x, the_model, total_money, ICs, attack_rate, power_k, tfinal, the_solver, dim_params),
-#     bounds=[(0, 1)],
-#     n=100,  # Number of sampling points
-#     sampling_method='halton'
-# )
 
-# # TESTING ONLY - Naive Euler's method
-# step = 1e-5
-# N_vec, E_vec = np.zeros(int(np.ceil(tfinal/step))), np.zeros(int(np.ceil(tfinal/step)))
-# N_vec[0], E_vec[0] = ICs    # ODE is for one cell, so make ICs about one cell
-# t_vec = np.arange(0, tfinal, step)
-# for ii in range(len(N_vec)-1):
-#     # Current values
-#     N_prev, E_prev = N_vec[ii], E_vec[ii]
-#     # Derivatives at current values
-#     dNdt = (dim_params['b'] - dim_params['m']) * (1 - N_prev / dim_params['k']) * N_prev - dim_params['q'] * N_prev * E_prev
-#     dEdt = dim_params['alpha'] * (1 - dim_params['gamma'] * test_density) * dim_params['p0'] * dim_params['q'] * N_prev * E_prev \
-#            - dim_params['alpha'] * (dim_params['c0'] + dim_params['cF'] * dim_params['gamma'] * test_density) * E_prev
-#
-#     # Next values
-#     N_vec[ii+1] = N_prev + step * dNdt
-#     E_vec[ii+1] = E_prev + step * dNdt
-#
-#     print(f't={t_vec[ii]}', end='\r')
-#
-# #
-# plt.plot(t_vec, test_area*N_vec, 'b', label='elephant')
-# # plt.plot(t_vec, test_area*E_vec, 'r', label='poacher')
-# # Equilibrium is for whole PA, so make populations scaled to whole area
-# plt.hlines(equilibrium(test_mua, test_mur, dim_params), 0, tfinal, 'r', linestyles='dashed')
-# plt.legend()
-# plt.title(f'Elephant and poacher population across entire PA (n={test_area})')
-# plt.show()
-# # TESTING ONLY
 
 if input('Create population time series (y/n)').lower().startswith('y'):
     # Plot time series for random proportion value
-    x, y = create_time_series(test_prop, total_money,
-                       attack_rate, power_k, tfinal, ICs, dim_params, the_model, 'Radau')
+    fig_time, ax_time, t, x, y = create_time_series(proportion, total_money,
+                                                    attack_rate, power_k, tfinal, ICs, dim_params, the_model, solver='LSODA', max_step=0.1)
 
 # ------------------------------------------
 if input('Plot equilibrium pop. against proportion (y/n)').lower().startswith('y'):
-    # PLOT of the equilibrium population size as a function of proportion
-    pvals = np.linspace(0, 0.99, 100)  # not including 0 and 1
-    yvals = np.zeros(np.size(pvals))
-    for ii in range(len(pvals)):
-        try:
-            # Note: objective minimises the negative population
-            yvals[ii] = -objective(pvals[ii], the_model, total_money, ICs,
-                                   attack_rate, power_k, tfinal, the_solver, dim_params)
-        except RuntimeWarning:
-            print(f'Bad value: {pvals[ii]}')
-            raise RuntimeError
+    # Doesn't converge for:
+    # ['0.01', '0.03', '0.04', '0.05', '0.09', '0.16', '0.17', '0.18', '0.21', '0.23', '0.25', '0.26', '0.27', '0.28',
+    # '0.29', '0.30', '0.31', '0.32', '0.54', '0.56', '0.61', '0.62', '0.70', '0.71', '0.76', '0.77', '0.78', '0.80',
+    # '0.81', '0.82', '0.83', '0.84', '0.85', '0.86', '0.87', '0.88', '0.89', '0.90', '0.91', '0.92']
+    fig_pop, ax_pop, bad_ps = create_population_plot(total_money, attack_rate, power_k, tfinal, ICs,
+                                                     num_it=100, dim_list=dim_params, model=the_model, solver='LSODA', max_step=0.1)
 
-    plt.plot(pvals, yvals, 'k', label='Equilibrium pop.')
-    plt.vlines(result.x, 0, max(yvals), 'r', label='Optimal p*')
-    plt.title('Late-time pop. average against proportion of money invested in rangers'
-              f'\nattack={attack_rate}, tf={tfinal}, money={total_money}')
-    plt.xlabel('Proportion p')
-    plt.ylabel('Late-time population size')
-    plt.show()
+    # Find the argmax of the population-proportion results and plot a red line
+    # Use a lambda function here to specify the extra arguments of objective() since shgo() currently has a bug
+    result = shgo(
+        func=lambda p: objective(p, the_model, total_money, ICs, attack_rate, power_k, tfinal, dim_params),
+        bounds=[(0, 0.999)],
+        n=100,  # Number of sampling points
+        sampling_method='halton'
+    )
+
+    ax_pop.vlines(result.x, 0, ax_pop.get_ylim()[1], 'r', label='Argmax of pop.')
+
+    # TESTING ONLY
+    pv = 0.06
+    fig_time2, ax_time2, t, x, y = create_time_series(pv, total_money,
+                                                      attack_rate, power_k, 200000, ICs, dim_params, the_model,
+                                                      solver='LSODA', max_step=0.1)
+    ax_time2.set_ylim([0, max(max(x), max(y))])
+    fig_time2.show()
 
 # ------------------------------------------
 if input('Plot optimal proportion against money (y/n)').lower().startswith('y'):
     # Array of total money values and optimal proportions
-    mu_array, p_array = optimal_proportions(the_model, max_money=total_money, init_cond=ICs, num_p=100,
-                                            par_attack=attack_rate,
-                                            par_power=power_k, tf=tfinal, dim_list=dim_params, solver=the_solver)
+    mu_array, p_array = optimal_proportions(the_model, total_money, ICs, 100,
+                                            attack_rate, power_k, tfinal, dim_params, solver='LSODA', max_step=0.1)
 
     plt.plot(mu_array, p_array)
     plt.title('Optimal proportion of money invested in rangers, vs. total money invested'
