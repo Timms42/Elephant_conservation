@@ -51,7 +51,7 @@ def lambda_func(par_f, money_array):
 def gamma_func(num_area, num_rangers, par_gamma, par_attack, par_power):
     """
     Computes perceived catchability of poachers by rangers as a function of current ranger density.
-    C1(x) = gamma*a*x^k/(1 + ax^k), where x is ranger density. Slope is 0 at x=0, and asymptotes at gamma as x->infinity.
+    C1(x) = gamma*a*x**k/(1 + ax**k), where x is ranger density. Slope is 0 at x=0, and asymptotes at gamma as x->infinity.
     Contrast this with law of mass-action, which has C2(x) = gamma. C1 <= C2 for all x.
     Return min(C1(x), 1) so that the catchability is bounded by 1.
     :param num_area: (float) current number of area cells
@@ -87,8 +87,6 @@ def equilibrium(mu_a, mu_r, dim_list):
     num_area = M_func(par_Mmax, par_mu0, mu_a)
     num_rangers = lambda_func(par_f, mu_r)
 
-    density = num_rangers / num_area
-
     # # Original equation
     # equil_pop = num_area * (par_c0 + par_cf * par_gamma * density) / (par_p0 * par_q * (1 - par_gamma * density))
 
@@ -99,7 +97,95 @@ def equilibrium(mu_a, mu_r, dim_list):
     return equil_pop
 
 
-def new_simple_model(t, y, money_area, money_ranger, par_attack, par_power, dim_list, model):
+
+# TESTING ONLY
+def exist_cond(money_area, dim_list):
+    """
+    Compute function that determines if 0 < X* < 1,
+    num_rangers < beta(num_cells).
+    Define B(mu_ranger, mu_area) = beta * M(mu_area) - lambda(mu_ranger)
+    Compute B = 0 contour. When  lambda(mu_ranger) > beta * M(mu_area), the stable
+    critical point is the carrying capacity, i.e. "above" the existence line
+
+    :param money_area: (array) array of total money values invested into area M
+    :param nondim_list: (dict of floats) the nondimensional parameters as in simple model
+                        [psi, delta, nu, sigma, f, M_max, mu_0]
+    :param dataset: (str) "elephant", "kuempel", or "wildebeest". Says which area-cost model to use,
+                        depending on the dataset chosen
+
+    :return (array, array) cell values for mu_ranger = beta(mu_area)
+    """
+
+    # Unpack dimensional parameters
+    par_b, par_m, par_k, par_q, par_alpha, par_p0, par_gamma, par_c0, par_cf, par_f, par_Mmax, par_mu0 = dim_list.values()
+
+    par_psi = dim_list['alpha'] * dim_list['p0'] * dim_list['q'] * dim_list['k'] / (dim_list['b'] - dim_list['m'])
+    par_delta = dim_list['alpha'] * dim_list['p0'] * dim_list['q'] * dim_list['k'] * dim_list['gamma'] / (
+            dim_list['b'] - dim_list['m'])
+    par_nu = dim_list['alpha'] * dim_list['c0'] / (dim_list['b'] - dim_list['m'])
+    par_sigma = dim_list['alpha'] * dim_list['gamma'] * dim_list['cF'] / (dim_list['b'] - dim_list['m'])
+
+    # mu_area as a function of mu_rangers, solution to beta * M(mu_area) = lambda(mu_ranger)
+    C = (par_psi - par_nu) / (par_sigma + par_delta)  # Constant based on parameters
+
+    # mu_rangers as function of mu_area
+    exist_contour = C / par_f * M_func(par_Mmax, par_mu0, money_area)
+
+    return exist_contour
+
+
+def proportion_from_curve(mu_a, mu_r, dim_list):
+    """
+    Compute the analytic optimal proportion for a given total amount of money invested for the simple model,
+    derived from the no-poaching threshold
+    :param mu_a: (array-like) current money invested in area
+    :param mu_r: (array-like) current money invested in area
+    :param dim_list: (dict) parameters for dimensionalised model,{b, m, k, q, alpha, p0, a, gamma, c0, cf, f, Mmax, mu0}
+
+    :return (array-like) optimal proportion of money to invest in rangers for given total investment
+    """
+
+    # Unpack dimensional parameters
+    par_b, par_m, par_k, par_q, par_alpha, par_p0, par_gamma, par_c0, par_cf, par_f, par_Mmax, par_mu0 = dim_list.values()
+
+    factor1 = 1/par_f * (par_p0 * par_q * par_k - par_c0) / (par_gamma * (par_cf + par_p0 * par_q * par_k))
+
+    factor2 = par_Mmax * mu_a / (par_mu0 + mu_a) / (mu_a + mu_r)
+
+    return factor1 * factor2
+
+
+def proportion_analytic(mu, dim_list):
+    """
+    Compute the analytic optimal proportion for a given total amount of money invested for the simple model,
+    derived from maximising the equilibrium population as a function of money invested
+    :param mu: (array-like) total money invested, mu = mu_a + mu_r
+    :param dim_list: (dict) parameters for dimensionalised model,{b, m, k, q, alpha, p0, a, gamma, c0, cf, f, Mmax, mu0}
+
+    :return (array-like) optimal proportion of money to invest in rangers for given total investment
+    """
+
+    # Unpack dimensional parameters
+    par_b, par_m, par_k, par_q, par_alpha, par_p0, par_gamma, par_c0, par_cf, par_f, par_Mmax, par_mu0 = dim_list.values()
+
+    A = mu * (par_c0 * par_Mmax + par_cf * par_f * par_gamma * par_mu0)
+    B = par_c0 * par_Mmax * (-3 * mu + par_mu0) - par_cf * par_f * par_gamma * par_mu0 * (mu + par_mu0)
+    C = 3 * par_c0 * par_Mmax * mu
+    D = -par_c0 * par_Mmax * (mu + par_mu0)
+
+    factor1 = -B / (3 * A)
+    factor2numer = - 2**(1/3) * (-B**2 + 3 * A * C)
+    factor2denom = (-2*B**3 + 9*A*B*C + 27*A**2*D + np.sqrt(4*(-B**2 + 3*A*C)**3 + (-2*B**3 + 9*A*B*C + 27*A**2*D)**2))**(1/3)
+
+    # factor3numerator is the same as factor2denom without being multiplied by 3A
+    factor3denom = 3 * 2**(1/3) * A
+
+    optimal_p = factor1 + factor2numer/(3*A*factor2denom) + factor2denom/factor3denom
+
+    return optimal_p, [A, B, C, D], [factor1, factor2numer/factor2denom, factor2denom/factor3denom]
+
+
+def simple_model(t, y, money_area, money_ranger, par_attack, par_power, dim_list, model):
     """
     :param t: time. used for scipy.solve_ivp
     :param z: (float or array) state variables N, E
@@ -198,10 +284,10 @@ def model_jacobian(t, y, money_area, money_ranger, par_attack, par_power, dim_li
     D = par_alpha * (par_c0 + par_cf * gamma_coeff * density)
 
     # dF1/dN
-    F1_N = (b - m) - 2 * (b - m) * N / k - q * E
+    F1_N = (par_b - par_m) - 2 * (par_b - par_m) * N / par_k - par_q * E
 
     # dF1/dE
-    F1_E = - q * N
+    F1_E = - par_q * N
 
     # dF2/dN
     F2_N = C * E
@@ -248,7 +334,7 @@ def create_time_series(prop, money, par_attack, par_power, tf, init_cond, dim_li
             raise TypeError(f'{key} is an invalid keyword argument for create_time_series()')
 
     # Function handle for ODE system to simulate
-    func = complex_model if model == 'complex' else new_simple_model
+    func = complex_model if model == 'complex' else simple_model
 
     mu_a = (1 - prop) * money
     mu_r = prop * money
@@ -302,7 +388,7 @@ def create_time_series(prop, money, par_attack, par_power, tf, init_cond, dim_li
     return fig, ax, t_vals, N_vals, E_vals
 
 
-def objective(prop, *args, **kwargs):
+def objective(prop, *args): # TESTING ONLY#, **kwargs):
     """
     Create investment plot for the complex model by numerically simulating the stable equilibrium and then numerically
     approximating partial derivatives. The larger p derivative indicates if managers should invest in area or rangers.
@@ -321,18 +407,19 @@ def objective(prop, *args, **kwargs):
     :return: long-time average population (float)
     """
 
-    model, money, init_cond, par_attack, par_power, tf, dim_list = args
+    model, money, init_cond, par_attack, par_power, tf, solver, max_step, dim_list = args
 
-    solver = 'LSODA' if model == 'complex' else 'Radau'
-    max_step = 1000 if model == 'complex' else 1e5
-    # If the user specifies an ODE solver and a max. step size, use these
-    for key in kwargs:
-        if key == 'solver':
-            solver = kwargs[key]
-        elif key == 'max_step':
-            max_step = kwargs[key]
-        else:
-            raise TypeError(f'{key} is an invalid keyword argument for objective()')
+    # TESTING ONLY
+    # solver = 'LSODA' if model == 'complex' else 'Radau'
+    # max_step = 1000 if model == 'complex' else 1e5
+    # # If the user specifies an ODE solver and a max. step size, use these
+    # for key in kwargs:
+    #     if key == 'solver':
+    #         solver = kwargs[key]
+    #     elif key == 'max_step':
+    #         max_step = kwargs[key]
+    #     else:
+    #         raise TypeError(f'{key} is an invalid keyword argument for objective()')
 
     mu_a = (1 - prop) * money
     mu_r = prop * money
@@ -341,7 +428,7 @@ def objective(prop, *args, **kwargs):
 
     # If the user specifies complex_model, use LSODA solver with a max_step of 1000 so we can
     # simulate it for long time with stability. For simple_model, use Radu and and max_step is fine.
-    func = complex_model if model == 'complex' else new_simple_model
+    func = complex_model if model == 'complex' else simple_model
 
     equil = sci.solve_ivp(fun=func, t_span=[0, tf], y0=init_cond,
                           args=(mu_a, mu_r, par_attack, par_power, dim_list, model),
@@ -398,7 +485,7 @@ def create_population_plot(money, par_attack, par_power, tf, init_cond, num_it, 
 
         # Note: objective returns the negative population for minimisation
         yvals[ii] = -objective(pvals[ii], model, money, init_cond,
-                               par_attack, par_power, tf, dim_params, solver=solver, max_step=max_step)
+                               par_attack, par_power, tf, solver, max_step, dim_list)
         # TESTING ONLY
         # except RuntimeWarning:
         #     # If there's a problem in evaluating the objective, raise an error and return the pval causing the issue
@@ -423,7 +510,8 @@ def create_population_plot(money, par_attack, par_power, tf, init_cond, num_it, 
 
     ax.plot(pvals, yvals, 'k', label='Equil. pop.')
     ax.set_title('Late-time pop. average against proportion of money invested in rangers'
-                 f'\nattack={attack_rate}, tf={tfinal}, money={money}, {the_model} model')
+                 f'\nattack={attack_rate}, tf={tfinal}, money={money}, {the_model} model'
+                 f'\nsolver={solver}, maxstep={max_step}')
     ax.set_xlabel('Proportion p')
     ax.set_ylabel('Late-time population size')
     # ax.set_ylim([0, max(yvals)])
@@ -510,7 +598,7 @@ k_total = 100000
 alpha = 1e-5
 b = 0.33  # natural per capita birth rate (Source: Lopes, 2015)
 m = 0.27  # natural per capita death rate (Source: Lopes, 2015)
-k = k_total / LVNP_size * cell_size  # Based on cell size of 706 = 15^2pi km2
+k = k_total / LVNP_size * cell_size  # Based on cell size of 706 = 15**2pi km2
 q = 2.56e-3  # catchability (Source: MG&LW, 1992)
 p0 = 3158.76  # max price paid for poached goods (Source: Messer, 2010)
 
@@ -529,62 +617,60 @@ dim_params = {'b': b, 'm': m, 'k': k, 'q': q, 'alpha': alpha, 'p0': p0, 'gamma':
 # PARAMETERS - complex model
 attack_rate = 1  # 1e8
 power_k = 2
-tfinal = 100000
+tfinal = 50000
 total_money = 2e8
 proportion = 0.4
 ICs = [k / 2, 2]
 the_model = 'simple'
 num_points = 1000
+the_step = 1
 
 # ------------------------------------------
 # BLACK BOX OPTIMISATION
 # TESTING ONLY
-# result = minimize_scalar(fun=objective,
-#                          bounds=[0, 1],
-#                          method='bounded',
-#                          args=(the_model, total_money, ICs, attack_rate, power_k, tfinal, the_solver, dim_params),
-#                          options=dict(disp=True), tol=1e-8
-#                          )
+# # TESTING ONLY
+# start = time.perf_counter()
+# result = shgo(
+#     func=lambda p: objective(p, the_model, total_money, ICs, attack_rate, power_k, tfinal, dim_params, solver='LSODA',
+#                              max_step=the_step),
+#     bounds=[(0, 0.999)],
+#     n=20,  # Number of sampling points
+#     sampling_method='halton'
+# )
+# total = time.perf_counter() - start
 
 
 if input('Create population time series (y/n)').lower().startswith('y'):
     # Plot time series for random proportion value
     fig_time, ax_time, t, x, y = create_time_series(proportion, total_money,
-                                                    attack_rate, power_k, tfinal, ICs, dim_params, the_model, solver='LSODA', max_step=0.1)
+                                                    attack_rate, power_k, tfinal, ICs, dim_params, the_model, solver='LSODA', max_step=the_step)
 
 # ------------------------------------------
 if input('Plot equilibrium pop. against proportion (y/n)').lower().startswith('y'):
-    # Doesn't converge for:
-    # ['0.01', '0.03', '0.04', '0.05', '0.09', '0.16', '0.17', '0.18', '0.21', '0.23', '0.25', '0.26', '0.27', '0.28',
-    # '0.29', '0.30', '0.31', '0.32', '0.54', '0.56', '0.61', '0.62', '0.70', '0.71', '0.76', '0.77', '0.78', '0.80',
-    # '0.81', '0.82', '0.83', '0.84', '0.85', '0.86', '0.87', '0.88', '0.89', '0.90', '0.91', '0.92']
+
     fig_pop, ax_pop, bad_ps = create_population_plot(total_money, attack_rate, power_k, tfinal, ICs,
-                                                     num_it=100, dim_list=dim_params, model=the_model, solver='LSODA', max_step=0.1)
+                                                     num_it=100, dim_list=dim_params, model=the_model, solver='LSODA', max_step=the_step)
 
     # Find the argmax of the population-proportion results and plot a red line
     # Use a lambda function here to specify the extra arguments of objective() since shgo() currently has a bug
-    result = shgo(
-        func=lambda p: objective(p, the_model, total_money, ICs, attack_rate, power_k, tfinal, dim_params),
-        bounds=[(0, 0.999)],
-        n=100,  # Number of sampling points
-        sampling_method='halton'
-    )
+
+    result = minimize_scalar(fun=objective,
+                             bounds=[0, 1],
+                             method='bounded',
+                             args=(
+                             the_model, total_money, ICs, attack_rate, power_k, tfinal, 'LSODA', the_step, dim_params),
+                             options=dict(disp=True), tol=1e-8
+                             )
 
     ax_pop.vlines(result.x, 0, ax_pop.get_ylim()[1], 'r', label='Argmax of pop.')
-
-    # TESTING ONLY
-    pv = 0.06
-    fig_time2, ax_time2, t, x, y = create_time_series(pv, total_money,
-                                                      attack_rate, power_k, 200000, ICs, dim_params, the_model,
-                                                      solver='LSODA', max_step=0.1)
-    ax_time2.set_ylim([0, max(max(x), max(y))])
-    fig_time2.show()
+    ax_pop.legend()
+    fig_pop.show()
 
 # ------------------------------------------
 if input('Plot optimal proportion against money (y/n)').lower().startswith('y'):
     # Array of total money values and optimal proportions
     mu_array, p_array = optimal_proportions(the_model, total_money, ICs, 100,
-                                            attack_rate, power_k, tfinal, dim_params, solver='LSODA', max_step=0.1)
+                                            attack_rate, power_k, tfinal, dim_params, solver='LSODA', max_step=the_step)
 
     plt.plot(mu_array, p_array)
     plt.title('Optimal proportion of money invested in rangers, vs. total money invested'
@@ -594,3 +680,18 @@ if input('Plot optimal proportion against money (y/n)').lower().startswith('y'):
     plt.axis([0, total_money, 0, 1])
 
     plt.show()
+
+
+# Optimal proportion from original plot
+mua_array = np.arange(1, 2e8, 1e4)
+mur_array = exist_cond(mua_array, dim_params)
+pstar = mur_array/(mua_array + mur_array)   # Taken straight from numerical output
+pstar2 = proportion_from_curve(mua_array, mur_array, dim_params)    # Analytic formula
+pstar3, constants = proportion_analytic(mua_array + mur_array, dim_params)
+
+plt.plot(mua_array+mur_array, pstar, 'b-')
+plt.plot(mua_array+mur_array, pstar2, 'k--')
+plt.plot(mua_array+mur_array, pstar3, 'kx', markersize=20)
+plt.xlabel('total money')
+plt.ylabel('proportion of funds in rangers')
+plt.show()
