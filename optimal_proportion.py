@@ -239,7 +239,7 @@ def complex_model(t, y, money_area, money_ranger, par_attack, par_power, dim_lis
     gamma_coeff = gamma_func(num_area, num_rangers, par_gamma, par_attack, par_power)
 
     Ndot = ((par_b - par_m) * (1 - N / par_k) - par_q * E) * N
-    Edot = par_alpha * E * ((1 - gamma_coeff * density) * par_p0 * par_q * N - par_c0 - gamma_coeff * par_cf * density)
+    Edot = par_alpha * E * ((1 - par_gamma * density) * par_p0 * par_q * N - par_c0 - gamma_coeff * par_cf * density)
 
     return [Ndot, Edot]
 
@@ -472,17 +472,28 @@ def create_population_plot(money, par_attack, par_power, tf, init_cond, num_it, 
     # Create an array of the proportions between 0 and 1, and initialise array for the population values
     # Have half as many points in [0, 0.2] as in [0.2, 0.4] and [0.4,0.6], etc. -> N/9 points in [0, 0.2]
 
-    pvals_low = np.linspace(0, 0.2, int(np.ceil(num_it/9)))
-    pvals_high = np.linspace(0.2+epsilon, 1 - epsilon, int(np.floor(8*num_it/9)))
+    pvals_low = np.linspace(0, 0.2, int(np.ceil(num_it / 9)))
+    pvals_high = np.linspace(0.2, 1 - epsilon, int(np.floor(8 * num_it / 9)))
     pvals = np.append(pvals_low, pvals_high)
     yvals = np.zeros(np.size(pvals))
+
+    # Sped twice as long simulating population for low proportions for simple model, and 5 times for complex model,
+    # since small proportions make the populations do really slow oscillations (O(1e6) time between spikes)
+    extra_time = 2*tf if model.startswith('s') else 5*tf
 
     for ii in range(len(pvals)):
         # For each proportion, compute the long-time population value
 
-        # Note: objective returns the negative population for minimisation
-        yvals[ii] = -objective(pvals[ii], model, money, init_cond,
-                               par_attack, par_power, tf, solver, max_step, dim_list)
+        if pvals[ii] <= 0.4:
+            # Use coarser grid for rho<0.2 but spend twice as long simulating the equilibrium.
+            # The late-time population vs rho is roughly linear for low rho in the simple model
+            # Note: objective returns the negative population for minimisation
+            yvals[ii] = -objective(pvals[ii], model, money, init_cond,
+                                   par_attack, par_power, extra_time, solver, max_step, dim_list)
+        else:
+            # Note: objective returns the negative population for minimisation
+            yvals[ii] = -objective(pvals[ii], model, money, init_cond,
+                                   par_attack, par_power, tf, solver, max_step, dim_list)
 
         # Print progress counter in steps of 0.1%
         print(f'{ii / num_it * 100:.1f}% complete', end='\r')
@@ -553,6 +564,7 @@ def optimal_proportions(model, max_money, init_cond, num_p, par_attack, par_powe
         it_start = time.perf_counter()  # Start the iteration timer
         # TESTING ONLY
         epsilon = 1e-3  # Small number to subtract from p=1 since 1 is a bad value
+        # Use a lambda function here to specify the extra arguments of objective() since shgo() currently has a bug
         # sol = shgo(
         #     func=lambda p: objective(p, model, money_array[ii], init_cond, par_attack, par_power, tf, dim_list, **kwargs),
         #     bounds=[(0, 1 - epsilon)],
@@ -596,7 +608,7 @@ def optimal_proportion_plot(model, init_cond, num_p, par_attack, par_power, tf, 
     :return: figure, axis, array of optimal proportion values, time taken (s) for each iteration of optimisation
     """
 
-    # Default solver for ODE integration. Should be LSODA for complex and Radau for simple
+    # Default solver for ODE integration. Good ones are LSODA for complex and Radau for simple
     solver = 'LSODA' if model == 'complex' else 'Radau'
     # Default maximum step size for chosen ODE solver
     max_step = 1000 if model == 'complex' else 1e5
@@ -613,7 +625,7 @@ def optimal_proportion_plot(model, init_cond, num_p, par_attack, par_power, tf, 
         elif key == 'lwd':  # Plot line width
             lwd = kwargs[key]
         elif key == 'fontsz':
-            fontsz = kwargs[key]    # Plot font size
+            fontsz = kwargs[key]  # Plot font size
         else:
             raise TypeError(f'{key} is an invalid keyword argument for optimal_proportion()')
 
@@ -622,25 +634,33 @@ def optimal_proportion_plot(model, init_cond, num_p, par_attack, par_power, tf, 
     mur_array = exist_cond(mua_array, dim_list)
     money_max = max(mua_array + mur_array)
 
-    # Optimal proportions caclulated from original investment plot
-    pstar = mur_array / (mua_array + mur_array)  # Taken straight from numerical output of the no-poaching threshold
-
-    # Optimise the proportion numerically from the numerical pop equilibrium
-    mu_array, p_array, iter_time = optimal_proportions(model, money_max, init_cond, num_p,
-                                                       par_attack, par_power, tf, dim_list, solver=solver,
-                                                       max_step=max_step)
-
     # Create figure for plotting the investment plot, with dimensions 12x12
     fig = plt.figure(figsize=(12, 12))
     # Add plot in figure, 1st subplot in plot with 1 row & 1 column
     ax = fig.add_subplot(111)
 
-    # Plot the 3 proportion estimates
-    ax.plot(mu_array, p_array, 'k-', label='Numerical', linewidth=lwd)
-    ax.plot(mua_array + mur_array, pstar, linestyle='solid', color='#d95f02', label='y/(x+y)', linewidth=lwd)
+    if model.startswith('s'):
+        # For the simple model, plot the optimal proportions calculated from no-poaching threshold in the original simple investment plot
+        pstar_simple = mur_array / (
+                mua_array + mur_array)  # Taken straight from numerical output of the no-poaching threshold
+        ax.plot(mua_array + mur_array, pstar_simple, linestyle='solid', color='#d95f02', label='y/(x+y)',
+                linewidth=lwd / 2)
+
+    # Plot the optimal proportion against total money for both simple and complex models
+    for mod in ["complex", "simple"]:
+
+        # Optimise the proportion numerically from the numerical pop equilibrium
+        mu_array, p_array, iter_time = optimal_proportions(mod, money_max, init_cond, num_p,
+                                                           par_attack, par_power, tf, dim_list, solver=solver,
+                                                           max_step=max_step)
+        ltype = 'dashed' if mod.startswith('s') else 'solid'
+        lcolour = '#d95f02' if mod.startswith('s') else 'k'
+
+        ax.plot(mu_array, p_array, linestyle=ltype, color=lcolour, label=mod, linewidth=lwd)
+
     ax.set_title(f'Optimal proportion of money invested in rangers, vs. total money invested'
-             f'\nModel: {model}, num_p={num_p}, attack={par_attack}, tf={tf}'
-             f'\nmaxstep={max_step}, solver={solver}', fontsize=fontsz)
+                 f'\nModel: {model}, num_p={num_p}, attack={par_attack}, tf={tf}'
+                 f'\nmaxstep={max_step}, solver={solver}', fontsize=fontsz)
     ax.set_xlabel('Total money invested', fontsize=fontsz)
     ax.set_ylabel('Optimal proportion p*', fontsize=fontsz)
     ax.axis([0, money_max, 0, 1])
@@ -687,11 +707,11 @@ dim_params = {'b': b, 'm': m, 'k': k, 'q': q, 'alpha': alpha, 'p0': p0, 'gamma':
 # PARAMETERS - complex model
 attack_rate = 1  # 1e8
 power_k = 2
-tfinal = 50000
+tfinal = 100000
 total_money = 2e8
 proportion = 0.4
 ICs = [k / 2, 2]
-the_model = 'simple'
+the_model = 'complex'
 num_points = 1000
 the_step = 1
 
@@ -711,8 +731,6 @@ if input('Plot equilibrium pop. against proportion (y/n)').lower().startswith('y
                                                      max_step=the_step)
 
     # Find the argmax of the population-proportion results and plot a red line
-    # Use a lambda function here to specify the extra arguments of objective() since shgo() currently has a bug
-
     start = time.perf_counter()
     result = minimize_scalar(fun=objective,
                              bounds=[0, 1],
@@ -730,7 +748,7 @@ if input('Plot equilibrium pop. against proportion (y/n)').lower().startswith('y
 
 # ------------------------------------------
 if input('Plot optimal proportion against money (y/n)').lower().startswith('y'):
-    fig_opt, ax_opt, p_opt, times = optimal_proportion_plot(the_model, ICs, num_p=50,
+    fig_opt, ax_opt, p_opt, times = optimal_proportion_plot(the_model, ICs, num_p=20,
                                                             par_attack=attack_rate, par_power=power_k,
                                                             tf=tfinal, dim_list=dim_params,
                                                             solver='LSODA', max_step=the_step, lwd=5, fontsz=20)
