@@ -54,7 +54,6 @@ import random as rand
 import time as time
 
 
-
 def xtot(cops_array, cells_array, nondim_list):
     """ Compute the total internal critical point MX*
         :param cells_array: (array) array of M, the number of land cells in protected area
@@ -351,8 +350,8 @@ def analytic_equil(money_area, money_ranger, par_attack, par_power, interaction,
     fines_gamma = par_gamma if fines_type.lower().startswith('real') else complex_gamma
 
     Nstar_local = (par_c0 + par_cf * confiscate_gamma * density) / (
-                par_p0 * par_q * (1 - fines_gamma * density))
-    Estar_local = (par_b - par_m) / par_q * (1 - Nstar_local/par_k)
+            par_p0 * par_q * (1 - fines_gamma * density))
+    Estar_local = (par_b - par_m) / par_q * (1 - Nstar_local / par_k)
 
     if (Estar_local > 0) and (Nstar_local > 0):
         Nstar = Nstar_local
@@ -1211,9 +1210,6 @@ def numerical_investment(dim_list, mu_ran_final, mu_area_final, mu_step, par_att
                    'sigma': par_alpha * par_gamma * par_cf / (par_b - par_m),
                    'f': par_f, 'par_coeff': par_Mmax, 'par_nonlin': par_mu0}
 
-    # Set relatively high ICs, so it should converge to stable equilibrium
-    ICs = [0.9 * par_k, 0.2 * (par_b - par_m) / par_q]
-
     # Linspace the points from 10 up to the maximum investments specified
     mu_area_range = np.linspace(start=1, stop=mu_area_final, num=num_p)
     mu_ranger_range = np.linspace(start=1, stop=mu_ran_final, num=num_p)
@@ -1234,22 +1230,23 @@ def numerical_investment(dim_list, mu_ran_final, mu_area_final, mu_step, par_att
         for ii in range(len(mu_ranger_range)):
             mu_r = mu_ranger_range[ii]  # The current value of ranger investment
 
-            newICs = ICs  # Try without solving original ODE system
+            # Set initial conditions close to the stable equilibrium for faster convergence.
+            # Don't use the exact equilibrium values in case  this equilibrium is not stable (pop can't change if set at equilibrium value).
+            # ICs for investment in area and investment in rangers
+            ICs_moneyr = analytic_equil(mu_a, mu_r+mu_step, attack_rate, power_k, the_interaction, dim_params)
+            ICs_moneya = analytic_equil(mu_a+mu_step, mu_r, attack_rate, power_k, the_interaction, dim_params)
 
             try:
-                # Compute the equilibrium population with an increase in area investment (finite difference)
-                # Use LSODA to detect and handle stiffness, probably caused by very large ranger densities for some inputs
-                equil_more_area = sci.solve_ivp(fun=complex_model, t_span=[0, tf], y0=newICs,
-                                                args=(
-                                                mu_a + mu_step, mu_r, par_attack, par_power, interaction, dim_list,
-                                                tol),
+                # Compute the equilibrium population with an increase in area investment
+                equil_more_area = sci.solve_ivp(fun=complex_model, t_span=[0, tf], y0=ICs_moneya,
+                                                args=(mu_a + mu_step, mu_r, par_attack, par_power,
+                                                      interaction, dim_list, tol),
                                                 method=solver, jac=complex_model_jacobian, max_step=max_step)
 
-                # Compute the equilibrium population with an increase in ranger investment (finite difference).
-                equil_more_ranger = sci.solve_ivp(fun=complex_model, t_span=[0, tf], y0=newICs,
-                                                  args=(
-                                                  mu_a, mu_r + mu_step, par_attack, par_power, interaction, dim_list,
-                                                  tol),
+                # Compute the equilibrium population with an increase in ranger investment
+                equil_more_ranger = sci.solve_ivp(fun=complex_model, t_span=[0, tf], y0=ICs_moneyr,
+                                                  args=(mu_a, mu_r + mu_step, par_attack, par_power, interaction,
+                                                        dim_list, tol),
                                                   method=solver, jac=complex_model_jacobian, max_step=max_step)
             except RuntimeWarning:
                 raise RuntimeError(f'Runtime warning at mu_a={mu_a}, mu_r={mu_r}, tf={tf}')
@@ -1260,7 +1257,7 @@ def numerical_investment(dim_list, mu_ran_final, mu_area_final, mu_step, par_att
             # Time and population values for ranger investment equilibrium
             t_vals_r, N_vals_r = equil_more_ranger.t, equil_more_ranger.y[0]
 
-            # Convert population sizes to total population sizes by multiplying by amount of area
+            # Convert population sizes to *total* population sizes by multiplying by amount of area
             N_vals_a *= M_func(par_Mmax, par_mu0, mu_a + mu_step, 'elephant')
             N_vals_r *= M_func(par_Mmax, par_mu0, mu_a, 'elephant')
 
@@ -1315,12 +1312,12 @@ def numerical_investment(dim_list, mu_ran_final, mu_area_final, mu_step, par_att
 
     # Add nice text labels to the plot
     title_text = (
-        f'Numerical investment plot\n Zambia elephants with {interaction[0]} confiscation and {interaction[1]} fines terms')
+        f'Numerical investment plot\n Zambia elephants with {interaction[0]} confiscation and {interaction[1]} fines')
     ax.set_title(title_text, fontsize=fontsz[0])
     ax.set_xlabel('Current USD invested in area', fontsize=fontsz[0])
     ax.set_ylabel('Current USD invested in rangers', fontsize=fontsz[0])
     ax.axis([0, mu_area_final, 0, mu_ran_final])
-    ax.legend(fontsize=fontsz[2], facecolor='#f0f0f0')
+    ax.legend(loc='upper left', fontsize=fontsz[2], facecolor='#f0f0f0')
 
     # Add in parameter text to the plot
     params_text = (f'C(lambda/n): a={par_attack}, k={par_power}'
@@ -1659,10 +1656,10 @@ num_points = 20  # 1000
 # of the investment plot. Size of each chunk (on area axis) = mu_area_max/num_points.
 # Make mu_step = 1/2 of this chunk size
 delta_mu = mu_area_max / num_points / 2
-attack_rate = 1e8
+attack_rate = 1
 power_k = 2
-tfinal = 30000
-the_interaction = ['real', 'real']
+tfinal = 100000
+the_interaction = ['perceived', 'perceived']
 tolerance = 1e-5
 the_solver = 'LSODA'
 the_step = 1
@@ -1688,21 +1685,16 @@ if input("Make a numerical investment plot? (y/n)").lower().startswith('y'):
                                                                                 fname=filename,
                                                                                 save=False)
 
-    # Grab all the points erroneously labelled as area (lower right quadrant)
-    wrong_classify = [(area_x[ii], area_y[ii]) for ii in range(len(area_x)) if
-                      area_x[ii] > 0.4e8 and area_y[ii] < 0.25e9]
-    # Test some specific investment values
-    mu_a_val, mu_r_val = wrong_classify[-1][0], wrong_classify[-1][1]
+    # Incorrectly? labelled area points
+    wrong_classify = thing=[(area_x[ii], area_y[ii]) for ii in range(len(area_x)) if area_y[ii]<0.25e9]
 
     # Make a histogram of the differences between equilibria?
     if input("Create histogram of the equilibrium differences? (y/n)").lower().startswith('y'):
         create_hist_equilibrium(differences, fontsz=20)
 
 if input("Create plot of time series? (y/n)").lower().startswith('y'):
-    # Original initial conditions TESTING ONLY
-    # ogICs = [0.9 * k, 0.2 * (b - m) / q]
-
-    test_val = (0.5 * mu_area_max, 0.1 * mu_ran_max)
+    # Original initial conditions
+    test_val = (0.2 * mu_area_max, 0 * mu_ran_max)
 
     ICs = analytic_equil(test_val[0], test_val[1], attack_rate,
                          power_k, the_interaction, dim_params)
@@ -1710,7 +1702,7 @@ if input("Create plot of time series? (y/n)").lower().startswith('y'):
     fig_time, ax_time = create_time_series(dim_params,  # mu_r=mu_r_val, mu_a=mu_a_val,
                                            mu_a=test_val[0], mu_r=test_val[1],
                                            # Start near but not on the stable equilibrium
-                                           init_cond=[0.99*x for x in ICs], par_attack=attack_rate, par_power=power_k,
+                                           init_cond=[0.99 * x for x in ICs], par_attack=attack_rate, par_power=power_k,
                                            tf=tfinal, interaction=the_interaction, tol=tolerance, solver=the_solver,
                                            max_step=the_step, fontsz=fontsizes, fname=filename, save=False)
 
