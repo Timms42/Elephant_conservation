@@ -51,6 +51,7 @@ import numpy as np
 import scipy.integrate as sci
 import warnings as wrn
 import random as rand
+import winsound
 import time as time
 
 
@@ -1169,7 +1170,7 @@ def create_time_series(dim_list, mu_a, mu_r, init_cond, par_attack, par_power, t
 
 
 def numerical_investment(dim_list, mu_ran_final, mu_area_final, mu_step, par_attack, par_power, tf,
-                         interaction, num_p, tol, solver, max_step, cols, mksize, fontsz, fname, save):
+                         interact, num_p, tol, solver, max_step, cols, mksize, fontsz, fname, save):
     """
     Create investment plot for the complex model by numerically simulating the stable equilibrium and then numerically
     approximating partial derivatives. The larger p derivative indicates if managers should invest in area or rangers.
@@ -1180,7 +1181,7 @@ def numerical_investment(dim_list, mu_ran_final, mu_area_final, mu_step, par_att
     :param par_attack: (float) scaling coefficient, equivalent to attack rate in Holling type III functional response
     :param par_power: (float) raise density to the power of par_power
     :param tf: (float) numerically solve ODEs to this end time
-    :param interaction: (list-like) [confiscation interaction, fines interaction]
+    :param interact: (list-like) [confiscation interaction, fines interaction]
         "real" if this model component uses the 'real' linear interaction term (par_gamma),
         "perception" if the component uses the complex "perceived" interaction (gamma_coeff)
     :param num_p: (int) number of points to plot for each axis
@@ -1233,8 +1234,8 @@ def numerical_investment(dim_list, mu_ran_final, mu_area_final, mu_step, par_att
             # Set initial conditions close to the stable equilibrium for faster convergence.
             # Don't use the exact equilibrium values in case  this equilibrium is not stable (pop can't change if set at equilibrium value).
             # ICs for investment in area and investment in rangers
-            ICs_moneyr = analytic_equil(mu_a, mu_r+mu_step, attack_rate, power_k, the_interaction, dim_params)
-            ICs_moneya = analytic_equil(mu_a+mu_step, mu_r, attack_rate, power_k, the_interaction, dim_params)
+            ICs_moneyr = analytic_equil(mu_a, mu_r+mu_step, attack_rate, power_k, interact, dim_params)
+            ICs_moneya = analytic_equil(mu_a+mu_step, mu_r, attack_rate, power_k, interact, dim_params)
 
             try:
                 # Compute the equilibrium population with an increase in area investment
@@ -1659,31 +1660,34 @@ delta_mu = mu_area_max / num_points / 2
 attack_rate = 1
 power_k = 2
 tfinal = 100000
-the_interaction = ['perceived', 'perceived']
+interaction_list = [['real', 'perceived'], ['perceived', 'perceived']]
 tolerance = 1e-5
 the_solver = 'LSODA'
 the_step = 1
 
 if input("Make a numerical investment plot? (y/n)").lower().startswith('y'):
-    # Marker size to cover a d x d plot (in points) with a marker width of sqrt(s), given n markers, is s = (d/n)^2
-    fig_numeric, ax_numeric, differences, area_x, area_y = numerical_investment(dim_list=dim_params,
-                                                                                mu_ran_final=mu_ran_max,
-                                                                                mu_area_final=mu_area_max,
-                                                                                mu_step=delta_mu,
-                                                                                par_attack=attack_rate,
-                                                                                par_power=power_k,
-                                                                                tf=tfinal,
-                                                                                interaction=the_interaction,
-                                                                                num_p=num_points,
-                                                                                tol=tolerance,
-                                                                                solver=the_solver,
-                                                                                max_step=the_step,
-                                                                                cols=['#ffffff', '#bdbdbd', 'k'],
-                                                                                # white, grey, and black
-                                                                                mksize=(12 * 72 / num_points) ** 2,
-                                                                                fontsz=fontsizes,
-                                                                                fname=filename,
-                                                                                save=False)
+    for interaction in interaction_list:
+        # Marker size to cover a d x d plot (in points) with a marker width of sqrt(s), given n markers, is s = (d/n)^2
+        fig_numeric, ax_numeric, differences, area_x, area_y = numerical_investment(dim_list=dim_params,
+                                                                                    mu_ran_final=mu_ran_max,
+                                                                                    mu_area_final=mu_area_max,
+                                                                                    mu_step=delta_mu,
+                                                                                    par_attack=attack_rate,
+                                                                                    par_power=power_k,
+                                                                                    tf=tfinal,
+                                                                                    interaction=interaction,
+                                                                                    num_p=num_points,
+                                                                                    tol=tolerance,
+                                                                                    solver=the_solver,
+                                                                                    max_step=the_step,
+                                                                                    cols=['#ffffff', '#bdbdbd', 'k'],
+                                                                                    # white, grey, and black
+                                                                                    mksize=(12 * 72 / num_points) ** 2,
+                                                                                    fontsz=fontsizes,
+                                                                                    fname=filename,
+                                                                                    save=False)
+
+    winsound.PlaySound('SystemHand', winsound.SND_ALIAS)
 
     # Incorrectly? labelled area points
     wrong_classify = thing=[(area_x[ii], area_y[ii]) for ii in range(len(area_x)) if area_y[ii]<0.25e9]
