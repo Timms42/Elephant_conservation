@@ -162,7 +162,7 @@ def lambda_func(par_f, money_array):
     return lambda_val
 
 
-def gamma_func(num_area, num_rangers, par_gamma, par_attack, par_power):
+def gamma_func(num_area, num_rangers, par_gamma, par_attack, par_handle, par_power):
     """
     Computes perceived catchability of poachers by rangers as a function of current ranger density.
     C1(x) = gamma*a*x^k/(1 + ax^k), where x is ranger density. Slope is 0 at x=0, and asymptotes at gamma as x->infinity.
@@ -172,6 +172,7 @@ def gamma_func(num_area, num_rangers, par_gamma, par_attack, par_power):
     :param num_rangers: (float) current number of rangers hired in total
     :param par_gamma: (float) catchability coefficient gamma from linear functional response/law of mass-action
     :param par_attack: (float) scaling coefficient, equivalent to attack rate in Holling type III functional response
+    :param par_handle: (float) scaling coefficient, equivalent to handling time in Holling type III functional response
     :param par_power: (float) raise density to the power of par_power
     :return: (float)
     """
@@ -179,19 +180,20 @@ def gamma_func(num_area, num_rangers, par_gamma, par_attack, par_power):
     # Compute density**k, where k is given in par_power
     density_pow_k = np.power(num_rangers / num_area, par_power)
 
-    perceived_gamma = par_gamma * par_attack * density_pow_k / (1 + par_attack * density_pow_k)
+    perceived_gamma = par_gamma * par_attack * density_pow_k / (1 + par_attack * par_handle * density_pow_k)
 
     # Note that this function for gamma is bounded by 0 and 1, so it can represent a proportion.
     return perceived_gamma
 
 
-def simple_model(t, y, money_area, money_ranger, par_attack, par_power, interaction, dim_list, terminate):
+def simple_model(t, y, money_area, money_ranger, par_attack, par_handle, par_power, interact, dim_list, terminate):
     """
     :param t: time. used for scipy.solve_ivp
     :param z: (float or array) state variables N, E
     :param money_area: (float) current money invested in area
     :param money_ranger: (float) current money invested in area
     :param par_attack: (float) scaling coefficient, equivalent to attack rate in Holling type III functional response
+    :param par_handle: (float) scaling coefficient, equivalent to handling time in Holling type III functional response
     :param par_power: (float) raise density to the power of par_power
     :param dim_list: (dict) parameters for dimensionalised model,{b, m, k, q, alpha, p0, a, gamma, c0, cf, f, Mmax, mu0}
     :param terminate: (float>0) tolerance for terminating numerical integration
@@ -216,19 +218,20 @@ def simple_model(t, y, money_area, money_ranger, par_attack, par_power, interact
     return [Ndot, Edot]
 
 
-def complex_model(t, y, money_area, money_ranger, par_attack, par_power, interaction, dim_list, terminate):
+def complex_model(t, y, money_area, money_ranger, par_attack, par_handle, par_power, interact, dim_list, terminate):
     """
     Elephant-poacher population model over the entire protected area
-    # Note: interaction ['real', 'real'] -> simple model, ['perceived', 'perceived'] -> complex model
+    # Note: interact ['real', 'real'] -> simple model, ['perceived', 'perceived'] -> complex model
     :param t: time. used for scipy.solve_ivp
     :param y: (float or array) state variables N, E
     :param money_area: (float) current money invested in area
     :param money_ranger: (float) current money invested in area
     :param par_attack: (float) scaling coefficient, equivalent to attack rate in Holling type III functional response
+    :param par_handle: (float) scaling coefficient, equivalent to handling time in Holling type III functional response
     :param par_power: (float) raise density to the power of par_power
-    :param interaction: (list-like) [confiscation interaction, fines interaction]
-        "real" if this model component uses the 'real' linear interaction term (par_gamma),
-        "perception" if the component uses the complex "perceived" interaction (gamma_coeff).
+    :param interact: (list-like) [confiscation interact, fines interact]
+        "real" if this model component uses the 'real' linear interact term (par_gamma),
+        "perception" if the component uses the complex "perceived" interact (gamma_coeff).
     :param dim_list: (dict) parameters for dimensionalised model,{b, m, k, q, alpha, p0, a, gamma, c0, cf, f, Mmax, mu0}
     :param terminate: (float>0) tolerance for terminating numerical integration
     :return: (array) value of time derivative dNdt and dEdt
@@ -236,8 +239,8 @@ def complex_model(t, y, money_area, money_ranger, par_attack, par_power, interac
     # Unpack state variables for num elephants N and poaching effort E
     N, E = y
 
-    # Unpack the interaction types (type of interaction for confiscation and fines model components
-    confiscate_type, fines_type = interaction
+    # Unpack the interact types (type of interact for confiscation and fines model components
+    confiscate_type, fines_type = interact
 
     # Unpack dimensional parameters
     par_b, par_m, par_k, par_q, par_alpha, par_p0, par_gamma, par_c0, par_cf, par_f, par_Mmax, par_mu0 = dim_list.values()
@@ -250,7 +253,7 @@ def complex_model(t, y, money_area, money_ranger, par_attack, par_power, interac
     density = num_rangers / num_area
 
     # Compute poachers' perceived catchability by rangers, which factors into expected cost of poaching.
-    complex_gamma = gamma_func(num_area, num_rangers, par_gamma, par_attack, par_power)
+    complex_gamma = gamma_func(num_area, num_rangers, par_gamma, par_attack, par_handle, par_power)
     confiscate_gamma = par_gamma if confiscate_type.lower().startswith('real') else complex_gamma
     fines_gamma = par_gamma if fines_type.lower().startswith('real') else complex_gamma
 
@@ -261,25 +264,29 @@ def complex_model(t, y, money_area, money_ranger, par_attack, par_power, interac
     return [Ndot, Edot]
 
 
-def complex_model_jacobian(t, y, money_area, money_ranger, par_attack, par_power, interaction, dim_list, tol):
+def complex_model_jacobian(t, y, money_area, money_ranger, par_attack, par_handle, par_power, interact, dim_list, tol):
     """
     Same arguments as complex_model(). Necessary for passing arguments to solve_ivp() in function numerical_investment()
-    :param t:
-    :param y:
-    :param money_area:
-    :param money_ranger:
-    :param par_attack:
-    :param par_power:
-    :param interaction:
-    :param dim_list:
-    :param tol:
-    :return:
+    Note: interact ['real', 'real'] -> simple model, ['perceived', 'perceived'] -> complex model
+    :param t: time. used for scipy.solve_ivp
+    :param y: (float or array) state variables N, E
+    :param money_area: (float) current money invested in area
+    :param money_ranger: (float) current money invested in area
+    :param par_attack: (float) scaling coefficient, equivalent to attack rate in Holling type III functional response
+    :param par_handle: (float) scaling coefficient, equivalent to handling time in Holling type III functional response
+    :param par_power: (float) raise density to the power of par_power
+    :param interact: (list-like) [confiscation interact, fines interact]
+        "real" if this model component uses the 'real' linear interact term (par_gamma),
+        "perception" if the component uses the complex "perceived" interact (gamma_coeff).
+    :param dim_list: (dict) parameters for dimensionalised model,{b, m, k, q, alpha, p0, a, gamma, c0, cf, f, Mmax, mu0}
+    :param terminate: (float>0) tolerance for terminating numerical integration
+    :return: (array) values of Jacobian matrix of the complex model
     """
     # Unpack state variables for num elephants N and poaching effort E
     N, E = y
 
-    # Unpack the interaction types (type of interaction for confiscation and fines model components
-    confiscate_type, fines_type = interaction
+    # Unpack the interact types (type of interact for confiscation and fines model components
+    confiscate_type, fines_type = interact
 
     # Unpack dimensional parameters
     par_b, par_m, par_k, par_q, par_alpha, par_p0, par_gamma, par_c0, par_cf, par_f, par_Mmax, par_mu0 = dim_list.values()
@@ -291,7 +298,7 @@ def complex_model_jacobian(t, y, money_area, money_ranger, par_attack, par_power
     # Compute the density of rangers over the protected area
     density = num_rangers / num_area
     # Compute poachers' perceived catchability by rangers, which factors into expected cost of poaching.
-    complex_gamma = gamma_func(num_area, num_rangers, par_gamma, par_attack, par_power)
+    complex_gamma = gamma_func(num_area, num_rangers, par_gamma, par_attack, par_handle, par_power)
     confiscate_gamma = par_gamma if confiscate_type.lower().startswith('real') else complex_gamma
     fines_gamma = par_gamma if fines_type.lower().startswith('real') else complex_gamma
 
@@ -315,25 +322,26 @@ def complex_model_jacobian(t, y, money_area, money_ranger, par_attack, par_power
     return np.array([[F1_N, F1_E], [F2_N, F2_E]])
 
 
-def analytic_equil(money_area, money_ranger, par_attack, par_power, interaction, dim_list):
+def analytic_equil(money_area, money_ranger, par_attack, par_handle, par_power, interact, dim_list):
     """
     Comnpute the analytic internal stable equilibrium (N*, P*) in one cell
-    Note: interaction ['real', 'real'] -> simple model, ['perceived', 'perceived'] -> complex model
+    Note: interact ['real', 'real'] -> simple model, ['perceived', 'perceived'] -> complex model
 
     :param money_area: (float) current money invested in area
     :param money_ranger: (float) current money invested in area
     :param par_attack: (float) scaling coefficient, equivalent to attack rate in Holling type III functional response
+    :param par_handle: (float) scaling coefficient, equivalent to handling time in Holling type III functional response
     :param par_power: (float) raise density to the power of par_power
-    :param interaction: (list-like) [confiscation interaction, fines interaction]
-        "real" if this model component uses the 'real' linear interaction term (par_gamma),
-        "perception" if the component uses the complex "perceived" interaction (gamma_coeff).
+    :param interact: (list-like) [confiscation interact, fines interact]
+        "real" if this model component uses the 'real' linear interact term (par_gamma),
+        "perception" if the component uses the complex "perceived" interact (gamma_coeff).
     :param dim_list: (dict) parameters for dimensionalised model,{b, m, k, q, alpha, p0, a, gamma, c0, cf, f, Mmax, mu0}
 
     :return: (list) equilibrium [N*, P*]
     """
 
-    # Unpack the interaction types (type of interaction for confiscation and fines model components
-    confiscate_type, fines_type = interaction
+    # Unpack the interact types (type of interact for confiscation and fines model components
+    confiscate_type, fines_type = interact
 
     # Unpack dimensional parameters
     par_b, par_m, par_k, par_q, par_alpha, par_p0, par_gamma, par_c0, par_cf, par_f, par_Mmax, par_mu0 = dim_list.values()
@@ -346,7 +354,7 @@ def analytic_equil(money_area, money_ranger, par_attack, par_power, interaction,
     density = num_rangers / num_area
 
     # Compute poachers' perceived catchability by rangers, which factors into expected cost of poaching.
-    complex_gamma = gamma_func(num_area, num_rangers, par_gamma, par_attack, par_power)
+    complex_gamma = gamma_func(num_area, num_rangers, par_gamma, par_attack, par_handle, par_power)
     confiscate_gamma = par_gamma if confiscate_type.lower().startswith('real') else complex_gamma
     fines_gamma = par_gamma if fines_type.lower().startswith('real') else complex_gamma
 
@@ -365,13 +373,14 @@ def analytic_equil(money_area, money_ranger, par_attack, par_power, interaction,
     return [Nstar, Estar]
 
 
-def event(t, y, money_area, money_ranger, par_attack, par_power, dim_list, terminate):
+def event(t, y, money_area, money_ranger, par_attack, par_handle, par_power, dim_list, terminate):
     """
     :param t: time. used for scipy.solve_ivp
     :param y: (float or array) state variables N, E
     :param money_area: (float) current money invested in area
     :param money_ranger: (float) current money invested in area
     :param par_attack: (float) scaling coefficient, equivalent to attack rate in Holling type III functional response
+    :param par_handle: (float) scaling coefficient, equivalent to handling time in Holling type III functional response
     :param par_power: (float) raise density to the power of par_power
     :param dim_list: (dict) parameters for dimensionalised model,{b, m, k, q, alpha, p0, a, gamma, c0, cf, f, Mmax, mu0}
     :param terminate: (float>0) tolerance for terminating numerical integration
@@ -381,7 +390,7 @@ def event(t, y, money_area, money_ranger, par_attack, par_power, dim_list, termi
     # Event function for solve_ivp. Terminate when ODEs are at equilibrium, i.e. |dNdt| + |dEdt| = epsilon << 1
     # Must return a scalar not a list, hence the summation.
 
-    Ndot, Edot = complex_model(t, y, money_area, money_ranger, par_attack, par_power, dim_list, terminate)
+    Ndot, Edot = complex_model(t, y, money_area, money_ranger, par_attack, par_handle, par_power, dim_list, terminate)
 
     return abs(Ndot) + abs(Edot) - terminate
 
@@ -1107,7 +1116,7 @@ def make_histogram(dim_range, num_it, dataset, fontsz, fname, save):
     return slope_vals
 
 
-def create_time_series(dim_list, mu_a, mu_r, init_cond, par_attack, par_power, tf, interaction, tol, solver,
+def create_time_series(dim_list, mu_a, mu_r, init_cond, par_attack, par_handle, par_power, tf, interact, tol, solver,
                        max_step, fontsz, fname, save):
     """
     Create investment plot for the complex model by numerically simulating the stable equilibrium and then numerically
@@ -1119,9 +1128,9 @@ def create_time_series(dim_list, mu_a, mu_r, init_cond, par_attack, par_power, t
     :param par_attack: (float) scaling coefficient, equivalent to attack rate in Holling type III functional response
     :param par_power: (float) raise density to the power of par_power
     :param tf: (float) numerically solve ODEs to this end time
-    :param interaction: (list-like) [confiscation interaction, fines interaction]
-        "real" if this model component uses the 'real' linear interaction term (par_gamma),
-        "perception" if the component uses the complex "perceived" interaction (gamma_coeff)
+    :param interact: (list-like) [confiscation interact, fines interact]
+        "real" if this model component uses the 'real' linear interact term (par_gamma),
+        "perception" if the component uses the complex "perceived" interact (gamma_coeff)
     :param tol: (float>0) error tolerance for ODE solver
     :param solver: (str) name of an ODE solver supported by solve_ivp. E.g. 'LSODA', 'RK45', 'Radau'
     :param fontsz: (list): list of font sizes [axes, axtick, legend]
@@ -1136,7 +1145,7 @@ def create_time_series(dim_list, mu_a, mu_r, init_cond, par_attack, par_power, t
     # Terminate if ODEs reach equilibrium
     # event.terminal = True
     equil = sci.solve_ivp(fun=complex_model, t_span=[0, tf], y0=init_cond,
-                          args=(mu_a, mu_r, par_attack, par_power, interaction, dim_list, tol),
+                          args=(mu_a, mu_r, par_attack, par_handle, par_power, interact, dim_list, tol),
                           method=solver, max_step=max_step)
 
     # Plotting the time series for one value of mu_area, mu_ranger
@@ -1169,7 +1178,7 @@ def create_time_series(dim_list, mu_a, mu_r, init_cond, par_attack, par_power, t
     return fig_t, ax_t
 
 
-def numerical_investment(dim_list, mu_ran_final, mu_area_final, mu_step, par_attack, par_power, tf,
+def numerical_investment(dim_list, mu_ran_final, mu_area_final, mu_step, par_attack, par_handle, par_power, tf,
                          interact, num_p, tol, solver, max_step, cols, mksize, fontsz, fname, save):
     """
     Create investment plot for the complex model by numerically simulating the stable equilibrium and then numerically
@@ -1179,11 +1188,12 @@ def numerical_investment(dim_list, mu_ran_final, mu_area_final, mu_step, par_att
     :param mu_area_final: (float) the largest current investment size in area for plotting
     :param mu_step: (float) step size for finite difference derivative calculations
     :param par_attack: (float) scaling coefficient, equivalent to attack rate in Holling type III functional response
+    :param par_handle: (float) scaling coefficient, equivalent to handling time in Holling type III functional response
     :param par_power: (float) raise density to the power of par_power
     :param tf: (float) numerically solve ODEs to this end time
-    :param interact: (list-like) [confiscation interaction, fines interaction]
-        "real" if this model component uses the 'real' linear interaction term (par_gamma),
-        "perception" if the component uses the complex "perceived" interaction (gamma_coeff)
+    :param interact: (list-like) [confiscation interact, fines interact]
+        "real" if this model component uses the 'real' linear interact term (par_gamma),
+        "perception" if the component uses the complex "perceived" interact (gamma_coeff)
     :param num_p: (int) number of points to plot for each axis
     :param tol: (float>0) error tolerance for ODE solvers (absolute and relative)
     :param solver: (str) name of an ODE solver supported by solve_ivp. E.g. 'LSODA', 'RK45', 'Radau'
@@ -1234,19 +1244,19 @@ def numerical_investment(dim_list, mu_ran_final, mu_area_final, mu_step, par_att
             # Set initial conditions close to the stable equilibrium for faster convergence.
             # Don't use the exact equilibrium values in case  this equilibrium is not stable (pop can't change if set at equilibrium value).
             # ICs for investment in area and investment in rangers
-            ICs_moneyr = analytic_equil(mu_a, mu_r+mu_step, attack_rate, power_k, interact, dim_params)
-            ICs_moneya = analytic_equil(mu_a+mu_step, mu_r, attack_rate, power_k, interact, dim_params)
+            ICs_moneyr = analytic_equil(mu_a, mu_r+mu_step, par_attack, par_handle, par_power, interact, dim_list)
+            ICs_moneya = analytic_equil(mu_a+mu_step, mu_r, par_attack, par_handle, par_power, interact, dim_list)
 
             try:
                 # Compute the equilibrium population with an increase in area investment
                 equil_more_area = sci.solve_ivp(fun=complex_model, t_span=[0, tf], y0=ICs_moneya,
-                                                args=(mu_a + mu_step, mu_r, par_attack, par_power,
-                                                      interaction, dim_list, tol),
+                                                args=(mu_a + mu_step, mu_r, par_attack, par_handle, par_power,
+                                                      interact, dim_list, tol),
                                                 method=solver, jac=complex_model_jacobian, max_step=max_step)
 
                 # Compute the equilibrium population with an increase in ranger investment
                 equil_more_ranger = sci.solve_ivp(fun=complex_model, t_span=[0, tf], y0=ICs_moneyr,
-                                                  args=(mu_a, mu_r + mu_step, par_attack, par_power, interaction,
+                                                  args=(mu_a, mu_r + mu_step, par_attack, par_handle, par_power, interact,
                                                         dim_list, tol),
                                                   method=solver, jac=complex_model_jacobian, max_step=max_step)
             except RuntimeWarning:
@@ -1313,7 +1323,7 @@ def numerical_investment(dim_list, mu_ran_final, mu_area_final, mu_step, par_att
 
     # Add nice text labels to the plot
     title_text = (
-        f'Numerical investment plot\n Zambia elephants with {interaction[0]} confiscation and {interaction[1]} fines')
+        f'Numerical investment plot\n Zambia elephants with {interact[0]} confiscation and {interact[1]} fines')
     ax.set_title(title_text, fontsize=fontsz[0])
     ax.set_xlabel('Current USD invested in area', fontsize=fontsz[0])
     ax.set_ylabel('Current USD invested in rangers', fontsize=fontsz[0])
@@ -1321,7 +1331,7 @@ def numerical_investment(dim_list, mu_ran_final, mu_area_final, mu_step, par_att
     ax.legend(loc='upper left', fontsize=fontsz[2], facecolor='#f0f0f0')
 
     # Add in parameter text to the plot
-    params_text = (f'C(lambda/n): a={par_attack}, k={par_power}'
+    params_text = (f'C(lambda/n): a={par_attack}, n={par_power}, h={par_handle}'
                    f'\nPoints={num_p}x{num_p}, tfinal={tfinal}, delta_mu={mu_step}'
                    f'\ngrey->invest in area, white->invest in rangers'
                    f'\nSolver={solver}, maxstep={max_step}')
@@ -1332,7 +1342,7 @@ def numerical_investment(dim_list, mu_ran_final, mu_area_final, mu_step, par_att
     # Save the plot if save==True
     if save:  # e.g. path\money_ranger_area_numerical_a1_p1000_2e8_tf1000_real_perceived.png
         savename = f'{fname}money_ranger_area_numerical_a{par_attack}_p{num_p}_{mu_area_final:.0e}_tf{tf}_' + '{}_{}.png'.format(
-            *interaction)
+            *interact)
         fig.savefig(savename)
 
     return fig, ax, equil_diff, plot_point_x, plot_point_y
@@ -1361,9 +1371,8 @@ def gamma_plot(ran_density, a_vals, par_gamma, fontsz, fname, save):
         plot_colour = 'grey'
         # By setting num_area=1, ranger_density/num_area = ranger_density, and we can input these into gamma_func
         line_holling = ax.plot(ran_density, gamma_func(1, ran_density, par_gamma=par_gamma, par_attack=a_val,
-                                                       par_power=2), color=plot_colour, linewidth=1,
-                               label='nonlinear gamma')[
-            0]
+                                                       par_handle=1,  par_power=2), color=plot_colour, linewidth=1,
+                               label='nonlinear gamma')[0]
 
     ax.set_title('perceived catchability of poachers by rangers\n against ranger density, for varying attack rates.',
                  fontsize=fontsz[0])
@@ -1487,10 +1496,15 @@ alpha = 1e-5  # poacher effort adjustment rate (Source: Holden & Lockyer, 2021)
 # Parameters for nonlinear price of land area
 cell_size = 706  # Size of area cells in km2. Based on circle of radius 15km  (Source: Hofer, 2000)
 
-dataset_name = input('Choose a parameter set ("e": elephant, "k": kuempel, or "w": wildebeest), or type "q" to quit: ')
-while dataset_name.lower()[0] not in ['e', 'k', 'w', 'q']:
-    print('Input must be one of "e", "k", or "w". Please try again, or type "quit" to quit')
-    dataset_name = input('Choose a parameter set ("e": elephant, "k": kuempel, "w": wildebeest, "q": quit): ')
+dataset_name = 'elephant'
+real_or_bubble = 'real'
+run_investment = False
+run_sensitivity = False
+run_histogram = False
+run_numerical = True
+run_difference = False
+run_timeseries = False
+run_gamma = False
 
 if dataset_name.lower().startswith('e'):
     # Use elephant parameter set and run the program
@@ -1512,8 +1526,6 @@ if dataset_name.lower().startswith('e'):
     q = 2.56e-3  # catchability (Source: MG&LW, 1992)
     p0 = 3158.76  # max price paid for poached goods (Source: Messer, 2010)
 
-    real_or_bubble = input("Do you want the real params or theoretical params that produce a bubble?"
-                           "\n Enter 'real' or 'bubble': ")
     if real_or_bubble.lower().startswith('r'):
         c0 = 1.911  # opportunity cost (Source: Lopes, 2015)
         cF = 1037.7276  # cost of fines per poacher * prob of conviction (Source: Holden et al., 2018)
@@ -1607,7 +1619,7 @@ dim_params = {'b': b, 'm': m, 'k': k, 'q': q, 'alpha': alpha, 'p0': p0, 'gamma':
               'c0': c0, 'cF': cF, 'f': f, 'par_coeff': par_coeff, 'par_nonlin': par_nonlin}
 
 # ------------- Run the investment plot program -------------
-if False:  # input("Create investment plot with simple enforcement? (y/n)").lower().startswith('y'):
+if run_investment:
     num_points = 100  # Number of points in each array, used for investment plot (needs to be the same)
 
     fig_invest, ax_invest, nondim_params = main(dim_list=dim_params, mu_ran_final=mu_ran_max, mu_area_final=mu_area_max,
@@ -1617,7 +1629,7 @@ if False:  # input("Create investment plot with simple enforcement? (y/n)").lowe
                                                 plot_slope=False, save_plot=True)
 
 # ------------- Run the sensitivity analysis -------------
-if False:  # input("Do sensitivity analysis on model with simple enforcement? (y/n)").lower().startswith('y'):
+if run_sensitivity:
     num_sim = 100
     sens_analysis_full(num_sim, [1, mu_area_max], num_points, dim_params, nondim_params,
                        dataset_name, fontsizes, save=False, fname=filename)
@@ -1632,7 +1644,7 @@ if False:  # input("Do sensitivity analysis on model with simple enforcement? (y
     print(f"Change in elephants = {[i * k * cells for i in derivs]}")
     print(f"ranger/cell = {rangers / cells}")
 
-if False:  # input("Make a histogram of the slope values for the existence condition? (y/n)").lower().startswith('y'):
+if run_histogram:
     # Histogram of the existence condition slope values
     dim_param_range = {'b': [0.33, 0.33],
                        'm': [0.27, 0.27],
@@ -1658,6 +1670,7 @@ num_points = 20  # 1000
 # Make mu_step = 1/2 of this chunk size
 delta_mu = mu_area_max / num_points / 2
 attack_rate = 1
+handle_time = 1
 power_k = 2
 tfinal = 100000
 interaction_list = [['real', 'perceived'], ['perceived', 'perceived']]
@@ -1665,17 +1678,25 @@ tolerance = 1e-5
 the_solver = 'LSODA'
 the_step = 1
 
-if input("Make a numerical investment plot? (y/n)").lower().startswith('y'):
-    for interaction in interaction_list:
+# Dict of parameter combinations to run simulations with (interaction, attack_rate, handling_time, tfinal)
+simulations = {'long_time': {'interaction': ['real', 'perceived'], 'attack': 1, 'handle': 1, 'tfinal': 500000},
+                'fast_handle': {'interaction': ['real', 'real'], 'attack': 1, 'handle': 0.1, 'tfinal': tfinal},
+                'slow_handle': {'interaction': ['real', 'real'], 'attack': 1, 'handle': 10, 'tfinal': tfinal}
+               }
+
+if run_numerical:
+    for sim in simulations.values():
+
         # Marker size to cover a d x d plot (in points) with a marker width of sqrt(s), given n markers, is s = (d/n)^2
         fig_numeric, ax_numeric, differences, area_x, area_y = numerical_investment(dim_list=dim_params,
                                                                                     mu_ran_final=mu_ran_max,
                                                                                     mu_area_final=mu_area_max,
                                                                                     mu_step=delta_mu,
-                                                                                    par_attack=attack_rate,
+                                                                                    par_attack=sim['attack'],
+                                                                                    par_handle=sim['handle'],
                                                                                     par_power=power_k,
-                                                                                    tf=tfinal,
-                                                                                    interaction=interaction,
+                                                                                    tf=sim['tfinal'],
+                                                                                    interact=sim['interaction'],
                                                                                     num_p=num_points,
                                                                                     tol=tolerance,
                                                                                     solver=the_solver,
@@ -1689,29 +1710,26 @@ if input("Make a numerical investment plot? (y/n)").lower().startswith('y'):
 
     winsound.PlaySound('SystemHand', winsound.SND_ALIAS)
 
-    # Incorrectly? labelled area points
-    wrong_classify = thing=[(area_x[ii], area_y[ii]) for ii in range(len(area_x)) if area_y[ii]<0.25e9]
-
     # Make a histogram of the differences between equilibria?
-    if input("Create histogram of the equilibrium differences? (y/n)").lower().startswith('y'):
+    if run_difference:
         create_hist_equilibrium(differences, fontsz=20)
 
-if input("Create plot of time series? (y/n)").lower().startswith('y'):
+if run_timeseries:
     # Original initial conditions
     test_val = (0.2 * mu_area_max, 0 * mu_ran_max)
 
     ICs = analytic_equil(test_val[0], test_val[1], attack_rate,
-                         power_k, the_interaction, dim_params)
+                         power_k, interaction_list[0], dim_params)
 
     fig_time, ax_time = create_time_series(dim_params,  # mu_r=mu_r_val, mu_a=mu_a_val,
                                            mu_a=test_val[0], mu_r=test_val[1],
                                            # Start near but not on the stable equilibrium
                                            init_cond=[0.99 * x for x in ICs], par_attack=attack_rate, par_power=power_k,
-                                           tf=tfinal, interaction=the_interaction, tol=tolerance, solver=the_solver,
+                                           tf=tfinal, interact=interaction_list[0], tol=tolerance, solver=the_solver,
                                            max_step=the_step, fontsz=fontsizes, fname=filename, save=False)
 
 # ------------- Plot the gamma functions -------------
-if input("Create plot of gamma functions? (y/n)").lower().startswith('y'):
+if run_gamma:
     attack_array = np.logspace(0, 3, 4, base=10)
     ranger_density = np.arange(start=0, stop=2, step=0.01)
 
