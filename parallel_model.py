@@ -12,7 +12,7 @@ from multiprocessing import Pool
 import conservation_model_analysis as model
 
 
-filename = 'C:\\Users\\timmslf\\Documents\\Newest_plots\\'
+filename = 'C:\\Users\\timmslf\\Documents\\official_plots\\'
 
 # Set random seed
 rand.seed(42)

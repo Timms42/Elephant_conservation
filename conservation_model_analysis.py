@@ -166,7 +166,7 @@ def lambda_func(par_f, money_array):
 def gamma_func(num_area, num_rangers, par_gamma, par_attack, par_handle, par_power, par_denom):
     """
     Computes perceived catchability of poachers by rangers as a function of current ranger density.
-    C1(x) = gamma*a*x^z/(w^z + a*h*x^z), where x is ranger density. Slope is 0 at x=0, and asymptotes at gamma as x->infinity.
+    B(x) = gamma*a*x^z/(w^z + a*h*x^z), where x is ranger density. Slope is 0 at x=0, and asymptotes at gamma as x->infinity.
     Contrast this with law of mass-action, which has C2(x) = gamma. C1 <= C2 for all x.
     Return min(C1(x), 1) so that the catchability is bounded by 1.
     :param num_area: (float) current number of area cells
@@ -175,6 +175,7 @@ def gamma_func(num_area, num_rangers, par_gamma, par_attack, par_handle, par_pow
     :param par_attack: (float) scaling coefficient, equivalent to attack rate in Holling type III functional response
     :param par_handle: (float) scaling coefficient, equivalent to handling time in Holling type III functional response
     :param par_power: (float) raise density to the power of par_power
+    :param par_denom: (float) parameter w on the denominator of B(x)
     :return: (float)
     """
 
@@ -1352,7 +1353,7 @@ def numerical_investment(dim_list, mu_ran_final, mu_area_final, mu_step, par_att
 
     # Add in parameter text to the plot
     params_text = (f'C(lambda/n): a={par_attack}, h={par_handle}, z={par_power}, w={par_denom},'
-                   f'\nPoints={num_p}x{num_p}, tfinal={tfinal}, delta_mu={mu_step}'
+                   f'\nPoints={num_p}x{num_p}, tfinal={tf}, delta_mu={mu_step}'
                    f'\ngrey->invest in area, white->invest in rangers'
                    f'\nSolver={solver}, maxstep={max_step}')
     ax.annotate(params_text, (0.3 * mu_area_final, 0.3 * mu_ran_final), fontsize=12)
@@ -1361,18 +1362,17 @@ def numerical_investment(dim_list, mu_ran_final, mu_area_final, mu_step, par_att
 
     # Save the plot if save==True
     if save:  # e.g. path\money_ranger_area_numerical_a1_p1000_2e8_tf1000_real_perceived.png
-        savename = f'{fname}money_ranger_area_numerical_w{par_denom}_z{par_power}_p{num_p}_{mu_area_final:.0e}_tf{tf}_' + '{}_{}.pdf'.format(
+        savename = f'{fname}numerical_w{par_denom}_z{par_power}_p{num_p}_{mu_area_final:.0e}_tf{tf}_' + '{}_{}.pdf'.format(
             *interact)
         fig.savefig(savename)
 
     return fig, ax, equil_diff, plot_point_x, plot_point_y
 
 
-def gamma_plot(ran_density, a_vals, par_gamma, fontsz, fname, save):
+def gamma_plot(ran_density, params, fontsz, fname, save):
     """
     :param ran_density: (list-like) list of ranger densities for plotting
-    :param a_vals: (list-like) list of a vaulues for plotting nonlinear gamma function
-    :param par_gamma: (float) catchability coefficient gamma from linear functional response/law of mass-action
+    :param params: (list-like) list of tuples (w, z) for plotting
     :param fontsz: (list): list of font sizes [axes, axtick, legend]
     :param fname: (str) Folder location to save figure
     :param save: (bool) True if save the histogram plot, False otherwise
@@ -1382,35 +1382,40 @@ def gamma_plot(ran_density, a_vals, par_gamma, fontsz, fname, save):
     fig = plt.figure(figsize=(12, 12))
     ax = fig.add_subplot(111)
 
-    # Plot gamma function with varying ranger densities, given a=1 and real gamma value of 0.043
-    # ALso plot constant C(lambda/n) = gamma lambda/n
-    for a_val in a_vals:
+    linestyles = ['solid', 'dashed', 'dotted', 'dashdot']
+
+    nonlinear_lines = []
+
+    # Plot gamma function with varying ranger densities, given w and z. Also plot constant C(lambda/n) = lambda/n
+    # use different linetype for each line
+    for par, linestyle in zip(params, linestyles):
+
+        par_denom, par_power = par
         # plot_colour = plt.cm.Greys(a_val/10)  # Can cycle colour for each line
         plot_colour = 'grey'
+
         # By setting num_area=1, ranger_density/num_area = ranger_density, and we can input these into gamma_func
-        line_holling3 = ax.plot(ran_density, gamma_func(1, ran_density, par_gamma=1, par_attack=a_val,
-                                                       par_handle=1,  par_power=2), color=plot_colour, linewidth=5,
-                               label='nonlinear gamma')[0]
+        gamma_line = ax.plot(ran_density, gamma_func(1, ran_density, par_gamma=1, par_attack=1,
+                                                       par_handle=1,  par_power=par_power, par_denom=par_denom),
+                                color=plot_colour, linewidth=5, linestyle=linestyle, label=f'{par}')[0]
+
+        nonlinear_lines.append(gamma_line)
 
     line_constant = ax.plot(ran_density, np.ones(len(ran_density)),
                             color='k', linewidth=5, label='constant')[0]  # Constant gamma
 
-    # line_holling2 = ax.plot(ran_density, gamma_func(1, ran_density, par_gamma=1, par_attack=1,
-    #                                                    par_handle=1,  par_power=1), color=plot_colour, linewidth=1,
-    #                         linestyle='dashed', label='nonlinear gamma')[0]
-
-    ax.set_title('perceived catchability of poachers by rangers\n against ranger density, for varying attack rates.',
+    ax.set_title("Poachers' believed catchability by rangers\n against ranger density.",
                  fontsize=fontsz[0])
     ax.set_xlabel('Ranger density, \u03BB/n', fontsize=fontsz[0])
-    ax.set_ylabel('Perceived catchability, C(\u03BB/n)', fontsize=fontsz[0])
-    ax.legend(handles=[line_constant, line_holling3], fontsize=fontsz[2])
+    ax.set_ylabel("Catchability, B(\u03BB/n)", fontsize=fontsz[0])
+    ax.legend(handles=[line_constant, *nonlinear_lines], fontsize=fontsz[2], loc='upper right')
 
-    ax.annotate(f'C(x) = gamma*a*x^2/(1+a*x^2),\nk=2, a\u2208{a_vals}', (0.25 * max(ran_density), 0.75 * par_gamma),
+    ax.annotate(f'C(x) = x^z/(w^z+x^z),\n(w,z)\u2208{params}', (0.25 * max(ran_density), 0.75),
                 fontsize=fontsz[0] / 2)
 
     fig.show()
     if save:
-        fig.savefig(f'{fname}\\money_ranger_area_gamma_function.pdf')
+        fig.savefig(f'{fname}money_ranger_area_gamma_function.pdf')
 
     return fig, ax
 
@@ -1504,7 +1509,7 @@ def main(dim_list, mu_ran_final, mu_area_final, num_p, dataset, ax, fontsz, file
 
 # ------------- THE MAIN PROGRAM -------------
 # File location
-filename = 'C:\\Users\\timmslf\\Documents\\Newest_plots\\'
+filename = 'C:\\Users\\TIMMSLF\\Downloads\\'
 
 # Catch the following warnings as errors, so they work with try/exceptd
 wrn.simplefilter('error', UserWarning)
@@ -1529,7 +1534,7 @@ run_histogram = False
 run_numerical = False
 run_difference = False
 run_timeseries = False
-run_gamma = False
+run_gamma = True
 make_heatmap = False
 
 if dataset_name.lower().startswith('e'):
@@ -1643,66 +1648,66 @@ else:
 
 dim_params = {'b': b, 'm': m, 'k': k, 'q': q, 'alpha': alpha, 'p0': p0, 'gamma': gamma,
               'c0': c0, 'cF': cF, 'f': f, 'par_coeff': par_coeff, 'par_nonlin': par_nonlin}
-
-# ------------- Run the investment plot program -------------
-if run_investment:
-    num_points = 100  # Number of points in each array, used for investment plot (needs to be the same)
-
-    fig_invest, ax_invest, nondim_params = main(dim_list=dim_params, mu_ran_final=mu_ran_max, mu_area_final=mu_area_max,
-                                                num_p=num_points, dataset=dataset_name, ax=None, fontsz=fontsizes,
-                                                fileloc=filename,
-                                                pname=f'money_mu{mu_ran_max:.2}_{dataset_name}_usd_test.pdf',
-                                                plot_slope=False, save_plot=True)
-
-# ------------- Run the sensitivity analysis -------------
-if run_sensitivity:
-    num_sim = 100
-    sens_analysis_full(num_sim, [1, mu_area_max], num_points, dim_params, nondim_params,
-                       dataset_name, fontsizes, save=False, fname=filename)
-
-    # Check what p. derivative values are in the bubble region
-    area_val = 0.3e6
-    ranger_val = 1e8
-    derivs = p_deriv(ranger_val, area_val, nondim_params, 'elephant')
-    cells = M_func(par_coeff, par_nonlin, area_val, 'elephant')
-    rangers = lambda_func(f, ranger_val)
-    # elephants = prop. of carry cap * carry cap/cell * cells
-    print(f"Change in elephants = {[i * k * cells for i in derivs]}")
-    print(f"ranger/cell = {rangers / cells}")
-
-if run_histogram:
-    # Histogram of the existence condition slope values
-    dim_param_range = {'b': [0.33, 0.33],
-                       'm': [0.27, 0.27],
-                       'k': [1000, 100000],
-                       'q': [0.00256, 0.51],
-                       'alpha': [1e-5, 1e-5],
-                       'p0': [200, 5000],  # Need p0>200 and k> 1000 so that p0*q*k > c0 for all parameter combinations.
-                       'gamma': [0.02, 0.5],  # otherwise, there's no poaching and the model doesn't make sense
-                       'c0': [5, 5000],
-                       'cF': [10, 10000],
-                       'f': [1 / 1067683.571, 1 / 94900],
-                       'par_coeff': [2.31e-09, 5e-03],
-                       'par_nonlin': [1, 1]  # Approx. Mmax/mu0 with constant price of area
-                       }
-
-    slope_dict = make_histogram(dim_param_range, num_it=50000, dataset='elephant',
-                                fontsz=[28, 28, 20], fname=filename, save=False)
-
-# ------------- Numerical investment plot with complex catchability -------------
-num_points = 100  # 1000
-# The change in investment (mu_step) should be big enough that it steps into the next "chunk"/discretised section
-# of the investment plot. Size of each chunk (on area axis) = mu_area_max/num_points.
-# Make mu_step = 1/2 of this chunk size
-delta_mu = mu_area_max / num_points / 2
-attack_rate = 1
-handle_time = 1
-# power_z = 2
-tfinal = 100000
-interaction = ['real', 'perceived']
-tolerance = 1e-5
-the_solver = 'LSODA'
-the_step = 1
+#
+# # ------------- Run the investment plot program -------------
+# if run_investment:
+#     num_points = 100  # Number of points in each array, used for investment plot (needs to be the same)
+#
+#     fig_invest, ax_invest, nondim_params = main(dim_list=dim_params, mu_ran_final=mu_ran_max, mu_area_final=mu_area_max,
+#                                                 num_p=num_points, dataset=dataset_name, ax=None, fontsz=fontsizes,
+#                                                 fileloc=filename,
+#                                                 pname=f'money_mu{mu_ran_max:.2}_{dataset_name}_usd_test.pdf',
+#                                                 plot_slope=False, save_plot=True)
+#
+# # ------------- Run the sensitivity analysis -------------
+# if run_sensitivity:
+#     num_sim = 100
+#     sens_analysis_full(num_sim, [1, mu_area_max], num_points, dim_params, nondim_params,
+#                        dataset_name, fontsizes, save=False, fname=filename)
+#
+#     # Check what p. derivative values are in the bubble region
+#     area_val = 0.3e6
+#     ranger_val = 1e8
+#     derivs = p_deriv(ranger_val, area_val, nondim_params, 'elephant')
+#     cells = M_func(par_coeff, par_nonlin, area_val, 'elephant')
+#     rangers = lambda_func(f, ranger_val)
+#     # elephants = prop. of carry cap * carry cap/cell * cells
+#     print(f"Change in elephants = {[i * k * cells for i in derivs]}")
+#     print(f"ranger/cell = {rangers / cells}")
+#
+# if run_histogram:
+#     # Histogram of the existence condition slope values
+#     dim_param_range = {'b': [0.33, 0.33],
+#                        'm': [0.27, 0.27],
+#                        'k': [1000, 100000],
+#                        'q': [0.00256, 0.51],
+#                        'alpha': [1e-5, 1e-5],
+#                        'p0': [200, 5000],  # Need p0>200 and k> 1000 so that p0*q*k > c0 for all parameter combinations.
+#                        'gamma': [0.02, 0.5],  # otherwise, there's no poaching and the model doesn't make sense
+#                        'c0': [5, 5000],
+#                        'cF': [10, 10000],
+#                        'f': [1 / 1067683.571, 1 / 94900],
+#                        'par_coeff': [2.31e-09, 5e-03],
+#                        'par_nonlin': [1, 1]  # Approx. Mmax/mu0 with constant price of area
+#                        }
+#
+#     slope_dict = make_histogram(dim_param_range, num_it=50000, dataset='elephant',
+#                                 fontsz=[28, 28, 20], fname=filename, save=False)
+#
+# # ------------- Numerical investment plot with complex catchability -------------
+# num_points = 100  # 1000
+# # The change in investment (mu_step) should be big enough that it steps into the next "chunk"/discretised section
+# # of the investment plot. Size of each chunk (on area axis) = mu_area_max/num_points.
+# # Make mu_step = 1/2 of this chunk size
+# delta_mu = mu_area_max / num_points / 2
+# attack_rate = 1
+# handle_time = 1
+# # power_z = 2
+# tfinal = 100000
+# interaction = ['real', 'perceived']
+# tolerance = 1e-5
+# the_solver = 'LSODA'
+# the_step = 1
 
 
 
@@ -1753,12 +1758,11 @@ the_step = 1
 #                                            max_step=the_step, fontsz=fontsizes, fname=filename, save=False)
 
 # # ------------- Plot the gamma functions -------------
-# if run_gamma:
-#     attack_array = np.logspace(0, 3, 4, base=10)
-#     ranger_density = np.arange(start=0, stop=2, step=0.01)
+if run_gamma:
+    ranger_density = np.arange(start=0, stop=15, step=0.01)
 
-#     fig_gamma, ax_gamma = gamma_plot(ranger_density, attack_array, par_gamma=gamma, fontsz=fontsizes, fname=filename,
-#                                      save=False)
+    fig_gamma, ax_gamma = gamma_plot(ranger_density, params=[(1, 1), (1,10), (10,1), (10,10)],fontsz=fontsizes, fname=filename,
+                                     save=True)
 
 
 # if make_heatmap == True:
