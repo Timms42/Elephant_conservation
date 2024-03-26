@@ -1,5 +1,5 @@
 # Conservation decision making
-Code for numerical ODE analysis, data analysis, and plots for Timms & Holden (2023).
+Code for numerical ODE analysis, data analysis, and plots for Timms & Holden (2024), https://doi.org/10.1016/j.biocon.2024.110463.
 
 "ode_phase_portrait.py" generates Figures 1a and b, the phase portraits.
 
